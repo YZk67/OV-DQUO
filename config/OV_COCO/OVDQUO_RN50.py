@@ -89,10 +89,10 @@ ema_epoch = 0
 
 
 ##### start open-vocabulary training parameters ##### 
-lr = 1.5e-4
+lr = 1.25e-4
 epochs = 30
 lr_drop = 50
-batch_size = 6
+batch_size = 5
 lr_backbone=0.0
 save_checkpoint_interval = 1
 wildcard="object"
