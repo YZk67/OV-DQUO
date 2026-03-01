@@ -64,8 +64,25 @@ def build_model_main(args):
     return model, criterion, postprocessors
 
 
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+            s.flush()
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+
 def main(args):
     utils.init_distributed_mode(args)
+    if args.rank == 0:
+        os.makedirs(args.output_dir, exist_ok=True)
+        _log1_file = open(os.path.join(args.output_dir, "Log1.txt"), "a")
+        sys.stdout = Tee(sys.__stdout__, _log1_file)
+        sys.stderr = Tee(sys.__stderr__, _log1_file)
     # load cfg file and update the args
     print("Loading config file from {}".format(args.config_file))
     time.sleep(args.rank * 0.02)

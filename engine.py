@@ -311,6 +311,9 @@ def evaluate(
         if coco_evaluator is not None:
             if "bbox" in postprocessors.keys():
                 stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
+                stats["AP50_base"] = float(coco_evaluator.coco_eval["bbox"].stats[12])
+                stats["AP50_novel"] = float(coco_evaluator.coco_eval["bbox"].stats[13])
+                print(f"AP50_base: {stats['AP50_base']:.4f}  AP50_novel: {stats['AP50_novel']:.4f}")
             if "segm" in postprocessors.keys():
                 stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
         return stats, coco_evaluator
