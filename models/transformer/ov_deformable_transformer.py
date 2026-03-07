@@ -20,7 +20,8 @@ class OVDeformableTransformer(DeformableTransformer):
         raw_visual_feats=None,
         raw_text_feats=None,
         targets=None,
-        backbone=None
+        backbone=None,
+        utb=None,
     ):
         src_flatten = []
         mask_flatten = []
@@ -119,6 +120,7 @@ class OVDeformableTransformer(DeformableTransformer):
             raw_text_feats=raw_text_feats,
             targets=targets,
             backbone=backbone,
+            utb=utb,
         )
         if refpoint_embed is not None:
             refpoint_embed = torch.cat([refpoint_embed, query], dim=1)
@@ -180,6 +182,7 @@ class OVDeformableTransformer(DeformableTransformer):
                        raw_text_feats,
                        targets,
                        backbone,
+                       utb=None,
                        ):
         if "RN" in self.args.backbone:
             src_feature = raw_visual_feats["layer4"] # C5 in ResNet
@@ -188,7 +191,7 @@ class OVDeformableTransformer(DeformableTransformer):
         text_feature = raw_text_feats
         if self.args.pseudo_box and self.training:
             pseudo_feature=text_feature[-1]
-            text_feature=text_feature[:-1] # remove wildcard embedding 
+            text_feature=text_feature[:-1] # remove wildcard embedding
             mask=get_match_pseudo_idx(region_proposals.sigmoid(),targets)
         sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
         with torch.no_grad():
@@ -216,23 +219,41 @@ class OVDeformableTransformer(DeformableTransformer):
                 outputs_class[:, :, target_index] = (
                     outputs_class[:, :, target_index] * self.args.target_class_factor
                 )
-            outputs_class = outputs_class[:, :, :-1]  
+            outputs_class = outputs_class[:, :, :-1]
             classes_ = outputs_class.max(-1)[1]
             if self.args.pseudo_box and self.training:
-                classes_[mask] = self.args.num_label_sampled    # override pseudo class 
-            classes_, indices = classes_.sort(-1) 
-            indices = indices.unsqueeze(-1).expand(
+                classes_[mask] = self.args.num_label_sampled    # override pseudo class
+            classes_, indices = classes_.sort(-1)
+            indices_4 = indices.unsqueeze(-1).expand(
                 indices.size(0), indices.size(1), 4
             )  #  bs,num_query,  4
-        query_box = torch.gather(region_proposals, 1, indices)
+        query_box = torch.gather(region_proposals, 1, indices_4)
         if self.args.pseudo_box and self.training:
             text_feature=torch.cat((text_feature,pseudo_feature.unsqueeze(0)),dim=0)
-        projected_text = self.text_proj(text_feature) 
+        projected_text = self.text_proj(text_feature)
         if classes_.dim() == 3:
             used_classes_ = classes_[:, :, 0]
         else:
             used_classes_ = classes_
         query_features = (F.one_hot(used_classes_, num_classes=text_feature.size(0)).to(text_feature.dtype)@ projected_text)
+
+        # UTB: replace wildcard embedding for pseudo proposals with UTB-assigned tokens
+        if utb is not None and self.args.pseudo_box and self.training:
+            pseudo_class_idx = self.args.num_label_sampled
+            pseudo_mask_sorted = (used_classes_ == pseudo_class_idx)  # [bs, nq]
+            # Build inverse sort mapping to get original ROI features for sorted pseudo positions
+            bs = indices.size(0)
+            nq = indices.size(1)
+            # indices maps sorted_pos -> original_pos; we need original ROI features
+            indices_d = indices.unsqueeze(-1).expand(bs, nq, roi_features.size(-1))
+            sorted_roi = torch.gather(roi_features, 1, indices_d)  # [bs, nq, D] sorted
+            # Collect all pseudo ROI features across batch for UTB assignment
+            all_pseudo_roi = sorted_roi[pseudo_mask_sorted]  # [N_pseudo_total, D]
+            if all_pseudo_roi.size(0) > 0:
+                assigned_tokens, _ = utb.assign(all_pseudo_roi)  # [N_pseudo_total, text_dim]
+                proj_assigned = self.text_proj(assigned_tokens)  # [N_pseudo_total, hidden_dim]
+                query_features[pseudo_mask_sorted] = proj_assigned
+
         return classes_, query_features, query_box
 
 def build_ov_deformable_transformer(args):

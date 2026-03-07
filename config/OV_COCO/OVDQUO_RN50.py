@@ -123,4 +123,16 @@ dataset_file = "ovcoco"
 label_version = "standard" 
 repeat_factor_sampling=False
 num_label_sampled=48 # keep compatible with ovlvis
-##### end dataset parameters ##### 
+##### end dataset parameters #####
+
+
+##### start UTB parameters #####
+utb_enabled = True
+utb_k = 8
+utb_tokens = ["object", "thing", "animal", "vehicle", "tool", "device", "furniture", "food"]
+utb_temperature = 0.1
+utb_top_m = 2
+utb_div_loss_coef = 0.01
+utb_bal_loss_coef = 0.01
+utb_freeze_epochs = 5
+##### end UTB parameters ##### 

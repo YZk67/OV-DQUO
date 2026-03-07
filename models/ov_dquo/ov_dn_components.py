@@ -19,6 +19,7 @@ def prepare_for_cdn_ov(
     num_classes,
     text_embbeding,
     label_enc_embbeding,
+    utb_dn_embedding=None,
 ):
     device = text_embbeding.device
     if training:
@@ -105,7 +106,10 @@ def prepare_for_cdn_ov(
         m = known_labels_expaned.long().to(device)
         m[m==-1]=num_classes-1
         input_label_embed = label_enc_embbeding(m)
-        input_label_embed[positive_idx]+=text_embbeding[-1][None,:] # 正样本text embbeding全为object
+        if utb_dn_embedding is not None:
+            input_label_embed[positive_idx]+=utb_dn_embedding[None,:] # UTB mean token for positives
+        else:
+            input_label_embed[positive_idx]+=text_embbeding[-1][None,:] # 正样本text embbeding全为object
         input_label_embed[negative_idx]+=text_embbeding[m[negative_idx]] # 负样本可以有noise text embbeding
         input_bbox_embed = inverse_sigmoid(known_bbox_expand)
         padding_label = torch.zeros(pad_size, 256).to(device)

@@ -7,6 +7,7 @@ from models.matcher.ov_matcher import build_ov_matcher
 from models.transformer.ov_deformable_transformer import build_ov_deformable_transformer
 from util import box_ops
 from models.ov_dquo.ov_dn_components import dn_post_process, prepare_for_cdn_ov
+from models.ov_dquo.utb import UnknownTokenBank
 from models.ov_dquo.ov_postprocess import OVPostProcess
 from models.registry import MODULE_BUILD_FUNCS
 import torch.nn as nn
@@ -166,6 +167,22 @@ class OV_DQUO(nn.Module):
 
         self.classifier = classifier
         self.args = args
+
+        # Unknown Token Bank
+        utb_enabled = getattr(args, "utb_enabled", False)
+        if utb_enabled:
+            with torch.no_grad():
+                utb_static = classifier(args.utb_tokens)  # [K, text_dim]
+            self.utb = UnknownTokenBank(
+                k=args.utb_k,
+                text_dim=args.text_dim,
+                static_embeddings=utb_static,
+                temperature=args.utb_temperature,
+                top_m=args.utb_top_m,
+            )
+        else:
+            self.utb = None
+
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -230,6 +247,12 @@ class OV_DQUO(nn.Module):
         # for ov dn
         if self.dn_number > 0 and self.training:
             proj_text_feature = self.transformer.text_proj(text_feature)
+            # UTB: compute mean projected token for DN positive queries
+            utb_dn_embedding = None
+            if self.utb is not None:
+                utb_tokens_raw = self.utb.get_tokens()  # [K, text_dim]
+                utb_proj = self.transformer.text_proj(utb_tokens_raw)  # [K, hidden_dim]
+                utb_dn_embedding = utb_proj.mean(dim=0)  # [hidden_dim]
             dn_query_label, dn_query_bbox, dn_attn_mask, dn_meta = prepare_for_cdn_ov(
                 dn_args=(
                     targets,
@@ -242,6 +265,7 @@ class OV_DQUO(nn.Module):
                 num_classes=len(proj_text_feature),
                 text_embbeding=proj_text_feature,
                 label_enc_embbeding=self.label_enc,
+                utb_dn_embedding=utb_dn_embedding,
             )
         else:
             dn_query_label = None
@@ -267,6 +291,7 @@ class OV_DQUO(nn.Module):
             raw_text_feats=text_feature,
             targets=targets,
             backbone=self.backbone,
+            utb=self.utb,
         )
         outputs_coord_list = []
         for _, (layer_ref_sig, layer_bbox_embed, layer_hs) in enumerate(
@@ -344,6 +369,10 @@ class OV_DQUO(nn.Module):
                     for a, b in zip(enc_outputs_class, enc_outputs_coord)
                 ]
         out["dn_meta"] = dn_meta
+        # UTB regularization losses
+        if self.utb is not None and self.training:
+            out["loss_utb_div"] = self.utb.diversity_loss()
+            out["loss_utb_bal"] = self.utb.balance_loss(self.utb._last_weights)
         if not self.training:
             sample_box = outputs_coord_list[-1:]
             roi_feats = []
@@ -480,6 +509,11 @@ def build_ov_dquo(args):
             }
         )
         weight_dict.update(interm_weight_dict)
+
+    # UTB regularization losses
+    if getattr(args, "utb_enabled", False):
+        weight_dict["loss_utb_div"] = args.utb_div_loss_coef
+        weight_dict["loss_utb_bal"] = args.utb_bal_loss_coef
 
     losses = ["labels", "boxes"]
     ov_matcher, vanilla_matcher = build_ov_matcher(args)

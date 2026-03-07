@@ -129,9 +129,13 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
                     )
                 l_dict = {k + f"_interm": v for k, v in l_dict.items()}
                 losses.update(l_dict)
-        ######### start bbox & classification loss for encoders ######### 
+        ######### start bbox & classification loss for encoders #########
 
-        
+        # Pass through UTB regularization losses from model outputs
+        for utb_key in ("loss_utb_div", "loss_utb_bal"):
+            if utb_key in outputs:
+                losses[utb_key] = outputs[utb_key]
+
         return losses
     
     def _loss_labels(self, outputs, targets, indices, num_boxes, pseudo_indices, num_pseudo_boxes,pseudo_weight, log=True, dn=False):
