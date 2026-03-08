@@ -173,6 +173,7 @@ class OV_DQUO(nn.Module):
         if utb_enabled:
             with torch.no_grad():
                 utb_static = classifier(args.utb_tokens)  # [K, text_dim]
+            classifier.cache.clear()  # prevent cache contamination of "object" etc.
             self.utb = UnknownTokenBank(
                 k=args.utb_k,
                 text_dim=args.text_dim,
