@@ -32,10 +32,13 @@ class UnknownTokenBank(nn.Module):
         self.offsets = nn.Parameter(torch.zeros(k, text_dim))
         # Cache last assignment weights for balance loss computation
         self._last_weights = None
+        # Warmup flag: when True, offsets are zeroed (but stay in graph for DDP)
+        self.warmup = False
 
     def get_tokens(self):
         """Returns L2-normalized bank tokens: norm(static + offset). Shape [K, D]."""
-        return F.normalize(self.static_tokens + self.offsets, dim=-1)
+        offsets = self.offsets * (0.0 if self.warmup else 1.0)
+        return F.normalize(self.static_tokens + offsets, dim=-1)
 
     def assign(self, region_features):
         """Assign region features to bank tokens via top-m sparse softmax.

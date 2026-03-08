@@ -42,11 +42,10 @@ def train_one_epoch(
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     model.train()
     criterion.train()
-    # UTB curriculum: freeze/unfreeze offsets based on epoch
+    # UTB curriculum: set warmup flag (offsets stay in graph but zeroed during warmup)
     _model = model.module if hasattr(model, "module") else model
     if hasattr(_model, "utb") and _model.utb is not None:
-        freeze_offsets = epoch < getattr(args, "utb_freeze_epochs", 0)
-        _model.utb.offsets.requires_grad_(not freeze_offsets)
+        _model.utb.warmup = epoch < getattr(args, "utb_freeze_epochs", 0)
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
