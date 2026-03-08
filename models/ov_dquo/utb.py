@@ -64,7 +64,7 @@ class UnknownTokenBank(nn.Module):
             weights = F.softmax(logits, dim=-1)
 
         assigned_tokens = weights @ tokens  # [N, D]
-        self._last_weights = weights  # cache for balance_loss
+        self._last_weights = weights.detach()  # cache for balance_loss (detached to avoid stale graph)
         return assigned_tokens, weights
 
     def diversity_loss(self):
