@@ -247,12 +247,14 @@ class OV_DQUO(nn.Module):
         # for ov dn
         if self.dn_number > 0 and self.training:
             proj_text_feature = self.transformer.text_proj(text_feature)
-            # UTB: compute mean projected token for DN positive queries
+            # UTB: compute blended DN embedding (alpha * UTB_mean + (1-alpha) * wildcard)
             utb_dn_embedding = None
-            if self.utb is not None:
+            if self.utb is not None and self.utb.alpha > 0:
                 utb_tokens_raw = self.utb.get_tokens()  # [K, text_dim]
                 utb_proj = self.transformer.text_proj(utb_tokens_raw)  # [K, hidden_dim]
-                utb_dn_embedding = utb_proj.mean(dim=0)  # [hidden_dim]
+                utb_mean = utb_proj.mean(dim=0)  # [hidden_dim]
+                wildcard_proj = proj_text_feature[-1]  # projected "object"
+                utb_dn_embedding = self.utb.alpha * utb_mean + (1 - self.utb.alpha) * wildcard_proj
             dn_query_label, dn_query_bbox, dn_attn_mask, dn_meta = prepare_for_cdn_ov(
                 dn_args=(
                     targets,
@@ -280,6 +282,7 @@ class OV_DQUO(nn.Module):
             ref_enc,
             init_box_proposal,
             classes_,
+            utb_weights,
         ) = self.transformer(
             srcs=srcs,
             masks=masks,
@@ -372,7 +375,7 @@ class OV_DQUO(nn.Module):
         # UTB regularization losses
         if self.utb is not None and self.training:
             out["loss_utb_div"] = self.utb.diversity_loss()
-            out["loss_utb_bal"] = self.utb.balance_loss(self.utb._last_weights)
+            out["loss_utb_bal"] = self.utb.balance_loss(utb_weights)
         if not self.training:
             sample_box = outputs_coord_list[-1:]
             roi_feats = []

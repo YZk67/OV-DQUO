@@ -34,6 +34,8 @@ class UnknownTokenBank(nn.Module):
         self._last_weights = None
         # Warmup flag: when True, offsets are zeroed (but stay in graph for DDP)
         self.warmup = False
+        # Ramp-up alpha: 0.0 = pure wildcard, 1.0 = pure UTB
+        self.alpha = 0.0
 
     def get_tokens(self):
         """Returns L2-normalized bank tokens: norm(static + offset). Shape [K, D]."""

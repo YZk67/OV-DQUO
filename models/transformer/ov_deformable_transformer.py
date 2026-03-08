@@ -114,7 +114,7 @@ class OVDeformableTransformer(DeformableTransformer):
         #########################################################
         #  begin text queries assignment
         #########################################################
-        classes_, query_features, query = self.text_query_assign(
+        classes_, query_features, query, utb_weights = self.text_query_assign(
             region_proposals=refpoint_embed_,
             raw_visual_feats=raw_visual_feats,
             raw_text_feats=raw_text_feats,
@@ -175,7 +175,7 @@ class OVDeformableTransformer(DeformableTransformer):
         # ref_enc: (n_enc+1, bs, nq, query_dim) or (1, bs, nq, query_dim) or (n_enc, bs, nq, d_model) or None
         #########################################################
 
-        return hs, references, hs_enc, ref_enc, init_box_proposal, classes_
+        return hs, references, hs_enc, ref_enc, init_box_proposal, classes_, utb_weights
 
     def text_query_assign(self,region_proposals,
                        raw_visual_feats,
@@ -237,8 +237,9 @@ class OVDeformableTransformer(DeformableTransformer):
             used_classes_ = classes_
         query_features = (F.one_hot(used_classes_, num_classes=text_feature.size(0)).to(text_feature.dtype)@ projected_text)
 
-        # UTB: replace wildcard embedding for pseudo proposals with UTB-assigned tokens
-        if utb is not None and self.args.pseudo_box and self.training:
+        # UTB: blend wildcard embedding with UTB-assigned tokens for pseudo proposals
+        utb_weights = None
+        if utb is not None and self.args.pseudo_box and self.training and utb.alpha > 0:
             pseudo_class_idx = self.args.num_label_sampled
             pseudo_mask_sorted = (used_classes_ == pseudo_class_idx)  # [bs, nq]
             # Build inverse sort mapping to get original ROI features for sorted pseudo positions
@@ -250,11 +251,13 @@ class OVDeformableTransformer(DeformableTransformer):
             # Collect all pseudo ROI features across batch for UTB assignment
             all_pseudo_roi = sorted_roi[pseudo_mask_sorted]  # [N_pseudo_total, D]
             if all_pseudo_roi.size(0) > 0:
-                assigned_tokens, _ = utb.assign(all_pseudo_roi)  # [N_pseudo_total, text_dim]
+                assigned_tokens, utb_weights = utb.assign(all_pseudo_roi)  # [N_pseudo_total, text_dim]
                 proj_assigned = self.text_proj(assigned_tokens)  # [N_pseudo_total, hidden_dim]
-                query_features[pseudo_mask_sorted] = proj_assigned
+                # Gradual blend: alpha * UTB + (1 - alpha) * wildcard
+                wildcard_proj = query_features[pseudo_mask_sorted]  # current wildcard projection
+                query_features[pseudo_mask_sorted] = utb.alpha * proj_assigned + (1 - utb.alpha) * wildcard_proj
 
-        return classes_, query_features, query_box
+        return classes_, query_features, query_box, utb_weights
 
 def build_ov_deformable_transformer(args):
     decoder_query_perturber = None
