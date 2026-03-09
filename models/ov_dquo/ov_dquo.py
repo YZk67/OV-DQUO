@@ -171,9 +171,15 @@ class OV_DQUO(nn.Module):
         # Unknown Token Bank
         utb_enabled = getattr(args, "utb_enabled", False)
         if utb_enabled:
-            with torch.no_grad():
-                utb_static = classifier(args.utb_tokens)  # [K, text_dim]
-            classifier.cache.clear()  # prevent cache contamination of "object" etc.
+            if "RN" in args.backbone:
+                with torch.no_grad():
+                    utb_static = classifier(args.utb_tokens)  # [K, text_dim]
+                classifier.cache.clear()  # prevent cache contamination
+            else:
+                # ViT path: load pre-computed UTB token embeddings from file
+                utb_embed_path = getattr(args, "utb_embed_path", "")
+                assert utb_embed_path, "utb_embed_path required for ViT backbone"
+                utb_static = torch.load(utb_embed_path, map_location=args.device)
             self.utb = UnknownTokenBank(
                 k=args.utb_k,
                 text_dim=args.text_dim,

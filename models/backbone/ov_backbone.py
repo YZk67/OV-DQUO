@@ -35,11 +35,22 @@ class EvaCLIPViT(BaseModule):
         self.visual = clip_model.visual
     
     def init_weights(self):
-        clip_model = open_clip.create_model(self.model_name,
-                                            pretrained="eva",
-                                            cache_dir=self.pretrained,
-                                            device="cpu")
-        print_log(self.visual.load_state_dict(clip_model.visual.state_dict(), strict=True))
+        if self.pretrained.endswith('.pt') and os.path.isfile(self.pretrained):
+            # Direct .pt checkpoint loading (e.g. CLIPSelf weights)
+            ckpt = torch.load(self.pretrained, map_location="cpu")
+            sd = ckpt.get("state_dict", ckpt)
+            visual_sd = {k.replace("visual.", ""): v for k, v in sd.items() if k.startswith("visual.")}
+            if not visual_sd:
+                visual_sd = sd
+            msg = self.visual.load_state_dict(visual_sd, strict=False)
+            print_log(f"Loaded weights from {self.pretrained}: {msg}")
+        else:
+            # Original open_clip cache loading
+            clip_model = open_clip.create_model(self.model_name,
+                                                pretrained="eva",
+                                                cache_dir=self.pretrained,
+                                                device="cpu")
+            print_log(self.visual.load_state_dict(clip_model.visual.state_dict(), strict=True))
         for param in self.visual.parameters():  # only freeze the CLIP model
             param.requires_grad = False
 
