@@ -130,9 +130,9 @@ num_label_sampled=48 # keep compatible with ovlvis
 utb_enabled = True
 utb_k = 8
 utb_tokens = ["object", "thing", "animal", "vehicle", "tool", "device", "furniture", "food"]
-utb_temperature = 0.1
+utb_temperature = 0.5
 utb_top_m = 2
-utb_div_loss_coef = 0.01
-utb_bal_loss_coef = 0.01
-utb_freeze_epochs = 5
+utb_div_loss_coef = 0.1
+utb_bal_loss_coef = 0.1
+utb_freeze_epochs = 1
 ##### end UTB parameters ##### 
