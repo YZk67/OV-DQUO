@@ -42,6 +42,11 @@ def train_one_epoch(
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     model.train()
     criterion.train()
+    # Set TPA epoch for APR warmup
+    if getattr(args, "use_tpa", False):
+        tpa = getattr(model.module if hasattr(model, "module") else model, "tpa", None)
+        if tpa is not None:
+            tpa.set_epoch(epoch)
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
@@ -95,6 +100,9 @@ def train_one_epoch(
                 target["ori_labels"] = target["labels"]
                 target["labels"] = target["labels"] - target["labels"]
             loss_dict = criterion(outputs, targets)
+            # Add APR loss from TPA if present
+            if "loss_apr" in outputs and outputs["loss_apr"] is not None:
+                loss_dict["loss_apr"] = outputs["loss_apr"]
             weight_dict = criterion.weight_dict
             losses = sum(
                 loss_dict[k] * weight_dict[k]

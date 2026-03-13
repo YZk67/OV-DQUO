@@ -1,7 +1,8 @@
 import copy
 import math
 import torch
-from models.backbone.ov_backbone import build_backbone, build_classifier
+from models.backbone.ov_backbone import build_backbone, build_classifier, load_multi_prompt_embed
+from models.tpa import TextPrototypeAggregator
 from models.criterion.ov_criterion_pseudo import OVSetCriterion_Pseudo
 from models.matcher.ov_matcher import build_ov_matcher
 from models.transformer.ov_deformable_transformer import build_ov_deformable_transformer
@@ -166,6 +167,22 @@ class OV_DQUO(nn.Module):
 
         self.classifier = classifier
         self.args = args
+
+        # TPA (Text Prototype Aggregator)
+        self.use_tpa = getattr(args, "use_tpa", False)
+        if self.use_tpa:
+            self.tpa = TextPrototypeAggregator(
+                text_dim=args.text_dim,
+                num_prototypes=getattr(args, "tpa_num_prototypes", 4),
+                hidden_dim=getattr(args, "tpa_hidden_dim", 256),
+                dropout=getattr(args, "tpa_dropout", 0.1),
+                tau=getattr(args, "tpa_tau", 0.07),
+                lambda_orth=getattr(args, "tpa_lambda_orth", 0.10),
+                lambda_div=getattr(args, "tpa_lambda_div", 0.03),
+                warmup_epochs=getattr(args, "tpa_warmup_epochs", 5),
+            )
+            self.soft_attention_tau = getattr(args, "soft_attention_tau", 0.07)
+
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -182,22 +199,50 @@ class OV_DQUO(nn.Module):
     ):
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
+        prototypes = None  # [C, K_proto, D] if TPA enabled (WITHOUT wildcard)
+        apr_loss = None
         if self.training:
             assert self.args.pseudo_box != ""
             with torch.no_grad():
                 if "RN" in self.args.backbone:
-                    categories.append(self.args.wildcard) # add wildcard embed
+                    if self.use_tpa:
+                        # Get multi-prompt for real categories (before adding wildcard)
+                        multi_embed = self.classifier.forward_multi(categories)  # [C, K, D]
+                    categories.append(self.args.wildcard)
                     text_feature = self.classifier(categories)
                 else:
                     assert self.args.num_label_sampled > 0
-                    text_feature=self.classifier[categories]
-                    text_feature=torch.cat([text_feature,self.classifier[-1][None,:]]) # add wildcard embed
+                    text_feature = self.classifier[categories]
+                    text_feature = torch.cat([text_feature, self.classifier[-1][None,:]])
+                    if self.use_tpa and hasattr(self, "_multi_prompt_embed"):
+                        multi_embed = self._multi_prompt_embed[categories]  # [C_sampled, K, D]
+            if self.use_tpa:
+                prototypes, apr_loss = self.tpa(multi_embed, with_loss=True)
+                # Override text_feature with prototype mean + wildcard for DN
+                proto_mean = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)  # [C, D]
+                if "RN" in self.args.backbone:
+                    # text_feature is [C+1, D]; replace first C with proto_mean, keep wildcard
+                    text_feature = torch.cat([proto_mean, text_feature[-1:]], dim=0)
+                else:
+                    # text_feature is [C_sampled+1, D]; replace first C with proto_mean, keep wildcard
+                    text_feature = torch.cat([proto_mean, text_feature[-1:]], dim=0)
         else:
             if "RN" in self.args.backbone:
-                text_feature=self.classifier(categories)
+                if self.use_tpa:
+                    with torch.no_grad():
+                        multi_embed = self.classifier.forward_multi(categories)
+                    prototypes, _ = self.tpa(multi_embed, with_loss=False)
+                    text_feature = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)
+                else:
+                    text_feature = self.classifier(categories)
             else:
                 assert self.args.pseudo_box != ""
-                text_feature=self.classifier[:-1] # remove wildcard embed during ovlvis inference
+                if self.use_tpa and hasattr(self, "_multi_prompt_embed"):
+                    multi_embed = self._multi_prompt_embed  # [C, K, D] all classes
+                    prototypes, _ = self.tpa(multi_embed, with_loss=False)
+                    text_feature = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)
+                else:
+                    text_feature = self.classifier[:-1]
         ori_clip_features, ori_clip_pos_embeds = self.backbone(samples)
         clip_features = [
             ori_clip_features[k] for k in ori_clip_features.keys() if k != "dense" and k != "layer4"# discard dense feature layer
@@ -267,6 +312,7 @@ class OV_DQUO(nn.Module):
             raw_text_feats=text_feature,
             targets=targets,
             backbone=self.backbone,
+            prototypes=prototypes,
         )
         outputs_coord_list = []
         for _, (layer_ref_sig, layer_bbox_embed, layer_hs) in enumerate(
@@ -344,6 +390,9 @@ class OV_DQUO(nn.Module):
                     for a, b in zip(enc_outputs_class, enc_outputs_coord)
                 ]
         out["dn_meta"] = dn_meta
+        # APR loss from TPA
+        if self.use_tpa and apr_loss is not None:
+            out["loss_apr"] = apr_loss
         if not self.training:
             sample_box = outputs_coord_list[-1:]
             roi_feats = []
@@ -367,7 +416,14 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            clip_outputs_class = roi_features @ text_feature.t()
+            if self.use_tpa and prototypes is not None:
+                # logsumexp over K prototypes: [bs, nq, C, K] -> [bs, nq, C]
+                sim = torch.einsum('bqd,ckd->bqck',
+                                   F.normalize(roi_features, dim=-1),
+                                   F.normalize(prototypes, dim=-1))
+                clip_outputs_class = torch.logsumexp(sim / self.soft_attention_tau, dim=-1)
+            else:
+                clip_outputs_class = roi_features @ text_feature.t()
             if self.args.analysis: #  for analysis
                 out["sim_mat"] = clip_outputs_class  
                 out["ori_pred_logits"] = outputs_class[-1]  
@@ -435,10 +491,18 @@ def build_ov_dquo(args):
     )
 
 
+    # Load multi-prompt embeddings for TPA (EVA only)
+    if getattr(args, "use_tpa", False) and "EVA" in args.backbone:
+        multi_prompt_embed = load_multi_prompt_embed(args)
+        if multi_prompt_embed is not None:
+            model.register_buffer("_multi_prompt_embed", multi_prompt_embed)
+
     # prepare weight dict
-    weight_dict = {"loss_ce": args.cls_loss_coef, 
+    weight_dict = {"loss_ce": args.cls_loss_coef,
                    "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
+    if getattr(args, "use_tpa", False):
+        weight_dict["loss_apr"] = getattr(args, "apr_loss_coef", 1.0)
     clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
 
     # for DN training

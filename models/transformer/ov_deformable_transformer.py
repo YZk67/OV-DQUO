@@ -20,7 +20,8 @@ class OVDeformableTransformer(DeformableTransformer):
         raw_visual_feats=None,
         raw_text_feats=None,
         targets=None,
-        backbone=None
+        backbone=None,
+        prototypes=None,
     ):
         src_flatten = []
         mask_flatten = []
@@ -119,6 +120,7 @@ class OVDeformableTransformer(DeformableTransformer):
             raw_text_feats=raw_text_feats,
             targets=targets,
             backbone=backbone,
+            prototypes=prototypes,
         )
         if refpoint_embed is not None:
             refpoint_embed = torch.cat([refpoint_embed, query], dim=1)
@@ -180,6 +182,7 @@ class OVDeformableTransformer(DeformableTransformer):
                        raw_text_feats,
                        targets,
                        backbone,
+                       prototypes=None,
                        ):
         if "RN" in self.args.backbone:
             src_feature = raw_visual_feats["layer4"] # C5 in ResNet
@@ -227,12 +230,37 @@ class OVDeformableTransformer(DeformableTransformer):
         query_box = torch.gather(region_proposals, 1, indices)
         if self.args.pseudo_box and self.training:
             text_feature=torch.cat((text_feature,pseudo_feature.unsqueeze(0)),dim=0)
-        projected_text = self.text_proj(text_feature) 
+        projected_text = self.text_proj(text_feature)
         if classes_.dim() == 3:
             used_classes_ = classes_[:, :, 0]
         else:
             used_classes_ = classes_
-        query_features = (F.one_hot(used_classes_, num_classes=text_feature.size(0)).to(text_feature.dtype)@ projected_text)
+
+        if prototypes is not None:
+            # Soft-attention over prototypes for query initialization
+            # Append wildcard prototypes if needed
+            if self.args.pseudo_box and self.training:
+                K_proto = prototypes.size(1)
+                wc_proto = pseudo_feature.unsqueeze(0).unsqueeze(0).expand(1, K_proto, -1)
+                all_prototypes = torch.cat([prototypes, wc_proto], dim=0)
+            else:
+                all_prototypes = prototypes
+            # Project all prototypes: [C, K, D] -> [C, K, hidden_dim]
+            C_total, K_proto, D = all_prototypes.shape
+            projected_protos = self.text_proj(all_prototypes.view(-1, D)).view(C_total, K_proto, -1)
+            # For each query, gather its assigned class's prototypes
+            raw_proto_per_query = all_prototypes[used_classes_]      # [bs, nq, K, D]
+            proj_proto_per_query = projected_protos[used_classes_]   # [bs, nq, K, hidden_dim]
+            # Soft-attention: roi_features attend to prototypes
+            tau = getattr(self.args, "soft_attention_tau", 0.07)
+            sim = torch.einsum('bqd,bqkd->bqk',
+                               F.normalize(roi_features, dim=-1),
+                               F.normalize(raw_proto_per_query, dim=-1)) / tau
+            attn = F.softmax(sim, dim=-1)  # [bs, nq, K]
+            query_features = torch.einsum('bqk,bqkd->bqd', attn, proj_proto_per_query)
+        else:
+            query_features = (F.one_hot(used_classes_, num_classes=text_feature.size(0)).to(text_feature.dtype) @ projected_text)
+
         return classes_, query_features, query_box
 
 def build_ov_deformable_transformer(args):

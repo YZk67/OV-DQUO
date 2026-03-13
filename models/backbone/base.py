@@ -242,6 +242,44 @@ class Classifier(torch.nn.Module):
         class_embedding = torch.stack(result)
         return class_embedding
 
+    def forward_feature_multi(self, category_list):
+        """Return per-prompt embeddings WITHOUT averaging: [C, K_max, D]."""
+        templates = imagenet_templates
+        all_texts = []
+        num_prompts_per_cat = []
+        for category in category_list:
+            prompts = self.get_concept_prompts(category)
+            if prompts is not None:
+                all_texts.extend(prompts)
+                num_prompts_per_cat.append(len(prompts))
+            else:
+                all_texts.extend(template.format(category) for template in templates)
+                num_prompts_per_cat.append(len(templates))
+        texts = tokenize(all_texts, context_length=self.context_length, truncate=True).to(
+            self.positional_embedding.device
+        )
+        class_embeddings = []
+        cursor = 0
+        step = 3000
+        while cursor <= len(texts):
+            class_embeddings.append(self.encode_text(texts[cursor : cursor + step]))
+            cursor += step
+        class_embeddings = torch.cat(class_embeddings)
+        class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)
+        # Split by per-category prompt count, pad to K_max
+        K_max = max(num_prompts_per_cat)
+        D = class_embeddings.size(-1)
+        result = []
+        offset = 0
+        for n in num_prompts_per_cat:
+            cat_emb = class_embeddings[offset : offset + n]  # [n, D]
+            if n < K_max:
+                pad = cat_emb.mean(dim=0, keepdim=True).expand(K_max - n, D)
+                cat_emb = torch.cat([cat_emb, pad], dim=0)
+            result.append(cat_emb)
+            offset += n
+        return torch.stack(result)  # [C, K_max, D]
+
     def forward(self, category_list):
         new_category = [
             category for category in category_list if category not in self.cache
@@ -256,3 +294,19 @@ class Classifier(torch.nn.Module):
         ).to(self.positional_embedding.device)
 
         return class_embedding
+
+    def forward_multi(self, category_list):
+        """Cached version of forward_feature_multi: returns [C, K_max, D]."""
+        cache_key = "_multi_cache"
+        if not hasattr(self, cache_key):
+            self._multi_cache = {}
+        new_category = [c for c in category_list if c not in self._multi_cache]
+        with torch.no_grad():
+            if new_category:
+                new_embeds = self.forward_feature_multi(new_category)
+                for cat, emb in zip(new_category, new_embeds):
+                    self._multi_cache[cat] = emb.to("cpu")
+        result = torch.stack(
+            [self._multi_cache[cat] for cat in category_list]
+        ).to(self.positional_embedding.device)
+        return result

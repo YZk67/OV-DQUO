@@ -223,5 +223,33 @@ def build_classifier(args):
         )
         return classifier
     else:
-        raise ValueError(f"Unsupported backbone: {args.backbone}") 
+        raise ValueError(f"Unsupported backbone: {args.backbone}")
+
+
+def load_multi_prompt_embed(args):
+    """Load multi-prompt embeddings [C, K, D] for EVA backbone (TPA use)."""
+    if "EVA" not in args.backbone:
+        return None
+    multi_path = getattr(args, "multi_prompt_text_embed", "")
+    if not multi_path:
+        return None
+    all_classes = json.load(open(args.all_classes))
+    multi_embed = torch.load(multi_path)
+    embeds = []
+    for name in all_classes:
+        emb = multi_embed[name]  # [K, D] or [D]
+        if emb.dim() == 1:
+            emb = emb.unsqueeze(0)  # [1, D]
+        embeds.append(emb)
+    # Pad to same K
+    K_max = max(e.size(0) for e in embeds)
+    padded = []
+    for e in embeds:
+        if e.size(0) < K_max:
+            pad = e.mean(dim=0, keepdim=True).expand(K_max - e.size(0), -1)
+            e = torch.cat([e, pad], dim=0)
+        padded.append(e)
+    result = torch.stack(padded, dim=0)  # [C, K, D]
+    result = F.normalize(result, p=2, dim=-1)
+    return result.to(args.device) 
 

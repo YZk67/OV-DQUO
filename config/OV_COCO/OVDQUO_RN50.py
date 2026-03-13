@@ -108,7 +108,21 @@ concept_text_path = "ovdcoco_prompts_list8_v2.json"
 backbone_out_indice=[1, 2, 3] # C3, C4, C5
 pseudo_box = "ow_labels/OW_COCO_R2.json"
 in_channel=[512, 1024]
-##### end open-vocabulary training parameters ##### 
+##### end open-vocabulary training parameters #####
+
+
+##### start TPA parameters #####
+use_tpa = True
+tpa_num_prototypes = 4
+tpa_hidden_dim = 256
+tpa_dropout = 0.1
+tpa_tau = 0.07
+tpa_lambda_orth = 0.10
+tpa_lambda_div = 0.03
+tpa_warmup_epochs = 5
+apr_loss_coef = 1.0
+soft_attention_tau = 0.07
+##### end TPA parameters ##### 
 
 
 ##### start inference parameters ##### 
