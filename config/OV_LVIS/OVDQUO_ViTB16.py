@@ -101,6 +101,7 @@ lr_backbone = 1e-5   # for transposed convolution in backbone
 backbone = "EVA02-CLIP-B-16"  
 pretrained = "pretrained/eva_vitb16_lvis_clipself_patches.pt"
 text_embed="pretrained/lvis_with_background_evaclip_vitb_16.pt"
+concept_text_embed="pretrained/lvis_concept_evaclip_vitb_16.pt"
 all_classes="pretrained/lvis_v1_all_classes.json"
 backbone_out_indice=[5, 7, 11]
 pseudo_box = "ow_labels/OW_LVIS_R3.json"

@@ -197,7 +197,9 @@ class Joiner(nn.Sequential):
 
 def build_classifier(args):
     if "EVA" in args.backbone:
-        class_embed = torch.load(args.text_embed)
+        # Use concept embeddings if available, otherwise fall back to text_embed
+        embed_path = getattr(args, "concept_text_embed", "") or args.text_embed
+        class_embed = torch.load(embed_path)
         all_classes = json.load(open(args.all_classes))
         all_embed = [class_embed[name] for name in all_classes]
         all_embed = torch.stack(all_embed, dim=0).contiguous()
