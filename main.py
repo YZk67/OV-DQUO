@@ -200,7 +200,26 @@ def main(args):
         num_workers=args.num_workers,
     )
 
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+    # Scheduler: warmup + cosine decay if configured, otherwise StepLR
+    warmup_epochs = getattr(args, "warmup_epochs", 0)
+    if warmup_epochs > 0:
+        import math
+        steps_per_epoch = len(data_loader_train)
+        warmup_steps = warmup_epochs * steps_per_epoch
+        total_steps = args.epochs * steps_per_epoch
+        min_lr_ratio = getattr(args, "min_lr_ratio", 0.01)
+
+        def warmup_cosine_lr(step):
+            if step < warmup_steps:
+                return step / warmup_steps
+            progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+            return min_lr_ratio + 0.5 * (1.0 - min_lr_ratio) * (1.0 + math.cos(math.pi * progress))
+
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_cosine_lr)
+        logger.info(f"Using warmup ({warmup_epochs} epochs) + cosine decay scheduler, "
+                     f"min_lr_ratio={min_lr_ratio}, total_steps={total_steps}")
+    else:
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
     if args.dataset_file == "coco_panoptic":
         # We also evaluate AP during panoptic training, on original coco DS
@@ -267,7 +286,8 @@ def main(args):
             ema_m=ema_m,
         )
         log_stats = {**{f"train_{k}": v for k, v in train_stats.items()}}
-        lr_scheduler.step()
+        if warmup_epochs == 0:
+            lr_scheduler.step()  # per-epoch step only for StepLR
         #  save checkpoint
         if args.output_dir:
             checkpoint_paths = [output_dir / "checkpoint.pth"]

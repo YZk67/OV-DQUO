@@ -131,6 +131,9 @@ def train_one_epoch(
             if max_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
             optimizer.step()
+        # Per-step lr scheduler update for warmup + cosine decay
+        if getattr(args, "warmup_epochs", 0) > 0 and lr_scheduler is not None:
+            lr_scheduler.step()
         if args.use_ema:
             if epoch >= args.ema_epoch:
                 ema_m.update(model)
