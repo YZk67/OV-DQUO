@@ -501,8 +501,6 @@ def build_ov_dquo(args):
     weight_dict = {"loss_ce": args.cls_loss_coef,
                    "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
-    if getattr(args, "use_tpa", False):
-        weight_dict["loss_apr"] = getattr(args, "apr_loss_coef", 1.0)
     clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
 
     # for DN training
@@ -544,6 +542,10 @@ def build_ov_dquo(args):
             }
         )
         weight_dict.update(interm_weight_dict)
+
+    # APR loss from TPA (added after all aux/interm processing)
+    if getattr(args, "use_tpa", False):
+        weight_dict["loss_apr"] = getattr(args, "apr_loss_coef", 1.0)
 
     losses = ["labels", "boxes"]
     ov_matcher, vanilla_matcher = build_ov_matcher(args)
