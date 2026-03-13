@@ -1,3 +1,4 @@
+import json
 import torch
 import torch.nn as nn
 from torchvision.models._utils import IntermediateLayerGetter
@@ -84,9 +85,10 @@ class LayerNorm(nn.LayerNorm):
         return ret.type(orig_type)
     
 class Classifier(torch.nn.Module):
-    def __init__(self, model_name: str, token_len=77,pretrained=None):
+    def __init__(self, model_name: str, token_len=77, pretrained=None, concept_text_path=""):
         super().__init__()
         self.cache = {}
+        self.category_to_concept = self._load_category_to_concept(concept_text_path)
 
         if pretrained:
             model_path=pretrained
@@ -157,6 +159,27 @@ class Classifier(torch.nn.Module):
         for v in self.parameters():
             v.requires_grad_(False)
 
+    def _load_category_to_concept(self, concept_text_path):
+        if not concept_text_path:
+            return {}
+        with open(concept_text_path, "r") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "category_to_concept" in data:
+            data = data["category_to_concept"]
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"Concept file {concept_text_path} must be a dict or contain "
+                "'category_to_concept'."
+            )
+        return data
+
+    def get_concept_prompts(self, category):
+        """Return list of prompts for a category, or None to use templates."""
+        val = self.category_to_concept.get(category)
+        if isinstance(val, list):
+            return val
+        return None
+
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
         # pytorch uses additive attention mask; fill with -inf
@@ -184,12 +207,18 @@ class Classifier(torch.nn.Module):
 
     def forward_feature(self, category_list):
         templates = imagenet_templates
-        texts = [
-            template.format(cetegory)
-            for cetegory in category_list
-            for template in templates
-        ]  # format with class
-        texts = tokenize(texts, context_length=self.context_length, truncate=True).to(
+        # Build text list: use concept prompts if available, else imagenet templates
+        all_texts = []
+        num_prompts_per_cat = []
+        for category in category_list:
+            prompts = self.get_concept_prompts(category)
+            if prompts is not None:
+                all_texts.extend(prompts)
+                num_prompts_per_cat.append(len(prompts))
+            else:
+                all_texts.extend(template.format(category) for template in templates)
+                num_prompts_per_cat.append(len(templates))
+        texts = tokenize(all_texts, context_length=self.context_length, truncate=True).to(
             self.positional_embedding.device
         )
         class_embeddings = []
@@ -202,11 +231,15 @@ class Classifier(torch.nn.Module):
         class_embeddings = class_embeddings / class_embeddings.norm(
             dim=-1, keepdim=True
         )
-        class_embeddings = class_embeddings.unflatten(
-            0, (len(category_list), len(templates))
-        )
-        class_embedding = class_embeddings.mean(dim=1)
-        class_embedding = class_embedding / class_embedding.norm(dim=-1, keepdim=True)
+        # Split by per-category prompt count and average
+        result = []
+        offset = 0
+        for n in num_prompts_per_cat:
+            cat_emb = class_embeddings[offset : offset + n].mean(dim=0)
+            cat_emb = cat_emb / cat_emb.norm()
+            result.append(cat_emb)
+            offset += n
+        class_embedding = torch.stack(result)
         return class_embedding
 
     def forward(self, category_list):
@@ -214,9 +247,10 @@ class Classifier(torch.nn.Module):
             category for category in category_list if category not in self.cache
         ]
         with torch.no_grad():
-            new_class_embedding = self.forward_feature(new_category)
-            for category, feat in zip(new_category, new_class_embedding):
-                self.cache[category] = feat.to("cpu")
+            if new_category:
+                new_class_embedding = self.forward_feature(new_category)
+                for category, feat in zip(new_category, new_class_embedding):
+                    self.cache[category] = feat.to("cpu")
         class_embedding = torch.stack(
             [self.cache[category] for category in category_list]
         ).to(self.positional_embedding.device)

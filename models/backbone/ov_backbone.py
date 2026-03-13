@@ -210,9 +210,15 @@ def build_classifier(args):
         return all_embed
     elif "RN" in args.backbone:
         classifier = Classifier(
-        model_name=args.backbone,
-        token_len=args.text_len,
-        pretrained=args.pretrained)
+            model_name=args.backbone,
+            token_len=args.text_len,
+            pretrained=args.pretrained,
+            concept_text_path=(
+                args.concept_text_path
+                if getattr(args, "use_concept_representation", False)
+                else ""
+            ),
+        )
         return classifier
     else:
         raise ValueError(f"Unsupported backbone: {args.backbone}") 
