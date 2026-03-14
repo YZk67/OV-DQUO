@@ -43,11 +43,14 @@ class TextPrototypeAggregator(nn.Module):
         self._init_parameters()
 
     def _init_parameters(self):
-        nn.init.xavier_uniform_(self.key_proj.weight)
+        # key_proj: small init so initial attention weights ≈ uniform
+        # → prototypes start as ≈ mean of input prompts
+        nn.init.normal_(self.key_proj.weight, std=1e-4)
         nn.init.zeros_(self.key_proj.bias)
-        nn.init.xavier_uniform_(self.value_proj.weight)
+        # value_proj: identity init so output ≈ input (preserve CLIP alignment)
+        nn.init.eye_(self.value_proj.weight)
         nn.init.zeros_(self.value_proj.bias)
-        nn.init.normal_(self.prototype_queries, std=0.02)
+        nn.init.normal_(self.prototype_queries, std=1e-4)
 
     def set_epoch(self, epoch):
         self.current_epoch.fill_(epoch)
