@@ -431,14 +431,7 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            if self.use_tpa and prototypes is not None:
-                # logsumexp over K prototypes: [bs, nq, C, K] -> [bs, nq, C]
-                sim = torch.einsum('bqd,ckd->bqck',
-                                   F.normalize(roi_features, dim=-1),
-                                   F.normalize(prototypes, dim=-1))
-                clip_outputs_class = torch.logsumexp(sim / self.soft_attention_tau, dim=-1)
-            else:
-                clip_outputs_class = roi_features @ text_feature.t()
+            clip_outputs_class = roi_features @ text_feature.t()
             if self.args.analysis: #  for analysis
                 out["sim_mat"] = clip_outputs_class  
                 out["ori_pred_logits"] = outputs_class[-1]  
