@@ -182,8 +182,8 @@ class OV_DQUO(nn.Module):
                 warmup_epochs=getattr(args, "tpa_warmup_epochs", 5),
             )
             self.soft_attention_tau = getattr(args, "soft_attention_tau", 0.07)
-            # Residual bypass: alpha starts at sigmoid(-5)≈0.007, so TPA is near no-op initially
-            self.tpa_alpha = nn.Parameter(torch.tensor(-5.0))
+            # Residual bypass: alpha starts at 0 (pure baseline), clamped to [0,1]
+            self.tpa_alpha = nn.Parameter(torch.tensor(0.0))
 
         self._reset_parameters()
 
@@ -221,7 +221,7 @@ class OV_DQUO(nn.Module):
             if self.use_tpa:
                 prototypes, apr_loss = self.tpa(multi_embed, with_loss=True)
                 # Residual bypass: blend TPA prototypes with original CLIP text
-                alpha = torch.sigmoid(self.tpa_alpha)
+                alpha = torch.clamp(self.tpa_alpha, 0.0, 1.0)
                 clip_text = text_feature[:-1]  # [C, D] without wildcard
                 clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)  # [C, K, D]
                 prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
@@ -237,7 +237,7 @@ class OV_DQUO(nn.Module):
                     clip_text = self.classifier(categories)  # [C, D] original CLIP text
                     prototypes, _ = self.tpa(multi_embed, with_loss=False)
                     # Residual bypass
-                    alpha = torch.sigmoid(self.tpa_alpha)
+                    alpha = torch.clamp(self.tpa_alpha, 0.0, 1.0)
                     clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)
                     prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
                     prototypes = F.normalize(prototypes, p=2, dim=-1)
@@ -251,7 +251,7 @@ class OV_DQUO(nn.Module):
                     clip_text = self.classifier[:-1]  # [C, D] original CLIP text
                     prototypes, _ = self.tpa(multi_embed, with_loss=False)
                     # Residual bypass
-                    alpha = torch.sigmoid(self.tpa_alpha)
+                    alpha = torch.clamp(self.tpa_alpha, 0.0, 1.0)
                     clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)
                     prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
                     prototypes = F.normalize(prototypes, p=2, dim=-1)
