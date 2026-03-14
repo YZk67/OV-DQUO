@@ -182,6 +182,8 @@ class OV_DQUO(nn.Module):
                 warmup_epochs=getattr(args, "tpa_warmup_epochs", 5),
             )
             self.soft_attention_tau = getattr(args, "soft_attention_tau", 0.07)
+            # Residual bypass: alpha starts at sigmoid(-5)≈0.007, so TPA is near no-op initially
+            self.tpa_alpha = nn.Parameter(torch.tensor(-5.0))
 
         self._reset_parameters()
 
@@ -218,20 +220,27 @@ class OV_DQUO(nn.Module):
                         multi_embed = self._multi_prompt_embed[categories]  # [C_sampled, K, D]
             if self.use_tpa:
                 prototypes, apr_loss = self.tpa(multi_embed, with_loss=True)
-                # Override text_feature with prototype mean + wildcard for DN
+                # Residual bypass: blend TPA prototypes with original CLIP text
+                alpha = torch.sigmoid(self.tpa_alpha)
+                clip_text = text_feature[:-1]  # [C, D] without wildcard
+                clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)  # [C, K, D]
+                prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
+                prototypes = F.normalize(prototypes, p=2, dim=-1)
+                # DN text_feature: blended prototype mean + wildcard
                 proto_mean = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)  # [C, D]
-                if "RN" in self.args.backbone:
-                    # text_feature is [C+1, D]; replace first C with proto_mean, keep wildcard
-                    text_feature = torch.cat([proto_mean, text_feature[-1:]], dim=0)
-                else:
-                    # text_feature is [C_sampled+1, D]; replace first C with proto_mean, keep wildcard
-                    text_feature = torch.cat([proto_mean, text_feature[-1:]], dim=0)
+                text_feature = torch.cat([proto_mean, text_feature[-1:]], dim=0)
         else:
             if "RN" in self.args.backbone:
                 if self.use_tpa:
                     with torch.no_grad():
                         multi_embed = self.classifier.forward_multi(categories)
+                    clip_text = self.classifier(categories)  # [C, D] original CLIP text
                     prototypes, _ = self.tpa(multi_embed, with_loss=False)
+                    # Residual bypass
+                    alpha = torch.sigmoid(self.tpa_alpha)
+                    clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)
+                    prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
+                    prototypes = F.normalize(prototypes, p=2, dim=-1)
                     text_feature = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)
                 else:
                     text_feature = self.classifier(categories)
@@ -239,7 +248,13 @@ class OV_DQUO(nn.Module):
                 assert self.args.pseudo_box != ""
                 if self.use_tpa and hasattr(self, "_multi_prompt_embed"):
                     multi_embed = self._multi_prompt_embed  # [C, K, D] all classes
+                    clip_text = self.classifier[:-1]  # [C, D] original CLIP text
                     prototypes, _ = self.tpa(multi_embed, with_loss=False)
+                    # Residual bypass
+                    alpha = torch.sigmoid(self.tpa_alpha)
+                    clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)
+                    prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
+                    prototypes = F.normalize(prototypes, p=2, dim=-1)
                     text_feature = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)
                 else:
                     text_feature = self.classifier[:-1]

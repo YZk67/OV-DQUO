@@ -47,6 +47,9 @@ def train_one_epoch(
         tpa = getattr(model.module if hasattr(model, "module") else model, "tpa", None)
         if tpa is not None:
             tpa.set_epoch(epoch)
+        base_model = model.module if hasattr(model, "module") else model
+        tpa_alpha_val = torch.sigmoid(base_model.tpa_alpha).item()
+        print(f"[TPA] epoch={epoch}, alpha={tpa_alpha_val:.4f} (raw={base_model.tpa_alpha.item():.4f})")
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
