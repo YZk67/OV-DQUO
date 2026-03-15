@@ -51,8 +51,14 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
                 dn_pos_weight.append(weight_i)
             dn_pos_weight=torch.cat(dn_pos_weight)
             output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
+            # Use actual DN positive count for normalization
+            num_dn_pos = sum([idx_pair[0].numel() for idx_pair in dn_pos_idx])
+            num_dn_pos = torch.as_tensor([num_dn_pos], dtype=torch.float, device=device)
+            if is_dist_avail_and_initialized():
+                torch.distributed.all_reduce(num_dn_pos)
+            num_dn_pos = torch.clamp(num_dn_pos / get_world_size(), min=1).item()
             l_dict = {}
-            l_dict.update(self._loss_labels_denoise(output_known_lbs_bboxes, pseudo_targets, dn_pos_idx,num_boxes*scalar,dn_pos_weight))
+            l_dict.update(self._loss_labels_denoise(output_known_lbs_bboxes, pseudo_targets, dn_pos_idx,num_dn_pos,dn_pos_weight))
             l_dict = {k + f'_dn': v for k, v in l_dict.items()}
             losses.update(l_dict)
         else:
@@ -99,7 +105,7 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
                 if self.training and dn_meta and "output_known_lbs_bboxes" in dn_meta:
                     aux_outputs_known = output_known_lbs_bboxes["aux_outputs"][i]
                     l_dict = {}
-                    l_dict.update(self._loss_labels_denoise(aux_outputs_known, pseudo_targets, dn_pos_idx,num_boxes*scalar,dn_pos_weight))
+                    l_dict.update(self._loss_labels_denoise(aux_outputs_known, pseudo_targets, dn_pos_idx,num_dn_pos,dn_pos_weight))
                     l_dict = {k + f"_dn_{i}": v for k, v in l_dict.items()}
                     losses.update(l_dict)
                 else:
@@ -117,15 +123,26 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
                 target_len = int(len(targets) / 2)
                 targets = targets[:target_len]
             indices,pseudo_indices,weight = self.vanilla_matcher(interm_outputs, targets)
+            # Use interm's own num_boxes for proper normalization
+            num_boxes_interm = sum([index[0].numel() for index in indices])
+            num_boxes_interm = torch.as_tensor([num_boxes_interm], dtype=torch.float, device=device)
+            if is_dist_avail_and_initialized():
+                torch.distributed.all_reduce(num_boxes_interm)
+            num_boxes_interm = torch.clamp(num_boxes_interm / get_world_size(), min=1).item()
+            num_pseudo_boxes_interm = sum([index[0].numel() for index in pseudo_indices])
+            num_pseudo_boxes_interm = torch.as_tensor([num_pseudo_boxes_interm], dtype=torch.float, device=device)
+            if is_dist_avail_and_initialized():
+                torch.distributed.all_reduce(num_pseudo_boxes_interm)
+            num_pseudo_boxes_interm = torch.clamp(num_pseudo_boxes_interm / get_world_size(), min=1).item()
             for loss in self.losses:
                 kwargs = {}
                 if loss == "labels":
                     # Logging is enabled only for the last layer
                     kwargs = {"log": False}
-                    l_dict = self._loss_labels_vfl(interm_outputs, targets, indices,num_boxes,pseudo_indices, num_pseudo_boxes,weight)
+                    l_dict = self._loss_labels_vfl(interm_outputs, targets, indices,num_boxes_interm,pseudo_indices, num_pseudo_boxes_interm,weight)
                 else:
                     l_dict = self.get_loss(
-                        loss, interm_outputs, targets, indices, num_boxes, **kwargs
+                        loss, interm_outputs, targets, indices, num_boxes_interm, **kwargs
                     )
                 l_dict = {k + f"_interm": v for k, v in l_dict.items()}
                 losses.update(l_dict)
