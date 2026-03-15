@@ -42,6 +42,8 @@ def main():
                         help="Output .pt file path")
     parser.add_argument("--all_classes", default="",
                         help="Path to lvis_v1_all_classes.json for key alignment verification")
+    parser.add_argument("--multi_prompt", action="store_true",
+                        help="Keep per-prompt embeddings [K, D] instead of averaging to [D]")
     args = parser.parse_args()
 
     # Load concept prompts
@@ -96,16 +98,26 @@ def main():
             tokens = tokenizer(prompts).to(device)
             text_features = model.encode_text(tokens)
             text_features = F.normalize(text_features, p=2, dim=-1)
-            # Average across prompts
-            avg_feature = text_features.mean(dim=0)
-            avg_feature = F.normalize(avg_feature, p=2, dim=0)
-            embed_dict[cat_name] = avg_feature.cpu()
+            if args.multi_prompt:
+                # Keep per-prompt embeddings [K, D] for TPA
+                embed_dict[cat_name] = text_features.cpu()
+            else:
+                # Average across prompts
+                avg_feature = text_features.mean(dim=0)
+                avg_feature = F.normalize(avg_feature, p=2, dim=0)
+                embed_dict[cat_name] = avg_feature.cpu()
 
             if (i + 1) % 200 == 0:
                 print(f"  Encoded {i + 1}/{len(categories)} categories")
 
-    print(f"Encoded all {len(categories)} categories, "
-          f"embedding dim = {avg_feature.shape[0]}")
+    sample_emb = list(embed_dict.values())[0]
+    emb_dim = sample_emb.shape[-1]
+    if args.multi_prompt:
+        print(f"Encoded all {len(categories)} categories, "
+              f"per-prompt shape = {sample_emb.shape}")
+    else:
+        print(f"Encoded all {len(categories)} categories, "
+              f"embedding dim = {emb_dim}")
 
     # Save
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
@@ -117,7 +129,7 @@ def main():
     meta = {
         "model_name": args.model_name,
         "num_categories": len(categories),
-        "embedding_dim": int(avg_feature.shape[0]),
+        "embedding_dim": int(emb_dim),
         "categories": categories,
     }
     with open(meta_path, "w") as f:
