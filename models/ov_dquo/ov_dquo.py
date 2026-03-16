@@ -168,7 +168,7 @@ class OV_DQUO(nn.Module):
         self.classifier = classifier
         self.args = args
 
-        # TPA (Text Prototype Aggregator)
+        # TPA (Text Prototype Aggregator) — LaMI-DETR style
         self.use_tpa = getattr(args, "use_tpa", False)
         if self.use_tpa:
             self.tpa = TextPrototypeAggregator(
@@ -179,11 +179,9 @@ class OV_DQUO(nn.Module):
                 tau=getattr(args, "tpa_tau", 0.07),
                 lambda_orth=getattr(args, "tpa_lambda_orth", 0.10),
                 lambda_div=getattr(args, "tpa_lambda_div", 0.03),
-                warmup_epochs=getattr(args, "tpa_warmup_epochs", 5),
+                warmup_ratio=getattr(args, "tpa_warmup_ratio", 0.05),
             )
             self.soft_attention_tau = getattr(args, "soft_attention_tau", 0.07)
-            # Residual bypass: sigmoid(-2.2) ≈ 0.1, gradient always flows
-            self.tpa_alpha = nn.Parameter(torch.tensor(-2.2))
 
         self._reset_parameters()
 
@@ -220,13 +218,7 @@ class OV_DQUO(nn.Module):
                         multi_embed = self._multi_prompt_embed[categories]  # [C_sampled, K, D]
             if self.use_tpa:
                 prototypes, apr_loss = self.tpa(multi_embed, with_loss=True)
-                # Residual bypass: blend TPA prototypes with original CLIP text
-                alpha = torch.sigmoid(self.tpa_alpha)
-                clip_text = text_feature[:-1]  # [C, D] without wildcard
-                clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)  # [C, K, D]
-                prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
-                prototypes = F.normalize(prototypes, p=2, dim=-1)
-                # DN text_feature: blended prototype mean + wildcard
+                # DN text_feature: prototype mean + wildcard (no alpha blend)
                 proto_mean = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)  # [C, D]
                 text_feature = torch.cat([proto_mean, text_feature[-1:]], dim=0)
         else:
@@ -234,13 +226,7 @@ class OV_DQUO(nn.Module):
                 if self.use_tpa:
                     with torch.no_grad():
                         multi_embed = self.classifier.forward_multi(categories)
-                    clip_text = self.classifier(categories)  # [C, D] original CLIP text
                     prototypes, _ = self.tpa(multi_embed, with_loss=False)
-                    # Residual bypass
-                    alpha = torch.sigmoid(self.tpa_alpha)
-                    clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)
-                    prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
-                    prototypes = F.normalize(prototypes, p=2, dim=-1)
                     text_feature = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)
                 else:
                     text_feature = self.classifier(categories)
@@ -248,13 +234,7 @@ class OV_DQUO(nn.Module):
                 assert self.args.pseudo_box != ""
                 if self.use_tpa and hasattr(self, "_multi_prompt_embed"):
                     multi_embed = self._multi_prompt_embed  # [C, K, D] all classes
-                    clip_text = self.classifier[:-1]  # [C, D] original CLIP text
                     prototypes, _ = self.tpa(multi_embed, with_loss=False)
-                    # Residual bypass
-                    alpha = torch.sigmoid(self.tpa_alpha)
-                    clip_text_expanded = clip_text.unsqueeze(1).expand_as(prototypes)
-                    prototypes = alpha * prototypes + (1 - alpha) * clip_text_expanded
-                    prototypes = F.normalize(prototypes, p=2, dim=-1)
                     text_feature = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)
                 else:
                     text_feature = self.classifier[:-1]
@@ -431,15 +411,27 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            clip_outputs_class = roi_features @ text_feature.t()
+            if self.use_tpa and prototypes is not None:
+                # LaMI-DETR logsumexp: compute similarity with each prototype,
+                # then aggregate via logsumexp across prototypes
+                # prototypes: [C, K_proto, D], roi_features: [B, Q, D]
+                B, Q, D = roi_features.shape
+                C, K_proto, _ = prototypes.shape
+                # [B, Q, C, K_proto]
+                sim_all = torch.einsum("bqd,ckd->bqck", roi_features, prototypes)
+                # logsumexp over prototypes → [B, Q, C]
+                clip_outputs_class = torch.logsumexp(sim_all * self.args.eval_tau, dim=-1) - math.log(K_proto)
+            else:
+                clip_outputs_class = roi_features @ text_feature.t()
+                clip_outputs_class = clip_outputs_class * self.args.eval_tau
             if self.args.analysis: #  for analysis
-                out["sim_mat"] = clip_outputs_class  
-                out["ori_pred_logits"] = outputs_class[-1]  
+                out["sim_mat"] = clip_outputs_class
+                out["ori_pred_logits"] = outputs_class[-1]
             clip_outputs_class = torch.cat(
                 [clip_outputs_class, torch.zeros_like(clip_outputs_class[:, :, :1])],
                 dim=-1,
             )
-            final_outputs_class = (clip_outputs_class * self.args.eval_tau).softmax(
+            final_outputs_class = clip_outputs_class.softmax(
                 dim=-1
             ) * (outputs_class[-1].sigmoid() ** self.args.objectness_alpha)
             final_outputs_class = final_outputs_class[:, :, :-1]

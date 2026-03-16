@@ -248,6 +248,15 @@ def main(args):
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
         return
+    # Set TPA total steps for step-based warmup
+    if getattr(args, "use_tpa", False):
+        _base_model = model.module if hasattr(model, "module") else model
+        _tpa = getattr(_base_model, "tpa", None)
+        if _tpa is not None:
+            total_steps = args.epochs * len(data_loader_train)
+            _tpa.set_total_steps(total_steps)
+            print(f"[TPA] total_steps={total_steps}, warmup_iters={int(total_steps * _tpa.warmup_ratio)}")
+
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):

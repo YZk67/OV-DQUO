@@ -42,14 +42,16 @@ def train_one_epoch(
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     model.train()
     criterion.train()
-    # Set TPA epoch for APR warmup
+    # TPA step-based warmup info
     if getattr(args, "use_tpa", False):
-        tpa = getattr(model.module if hasattr(model, "module") else model, "tpa", None)
-        if tpa is not None:
-            tpa.set_epoch(epoch)
         base_model = model.module if hasattr(model, "module") else model
-        tpa_alpha_val = torch.sigmoid(base_model.tpa_alpha).item()
-        print(f"[TPA] epoch={epoch}, alpha={tpa_alpha_val:.4f}")
+        tpa = getattr(base_model, "tpa", None)
+        if tpa is not None:
+            warmup_done = tpa.warmup_done
+            step = tpa.current_step.item()
+            total = tpa.total_steps.item()
+            warmup_iters = int(total * tpa.warmup_ratio) if total > 0 else 0
+            print(f"[TPA] epoch={epoch}, step={step}/{total}, warmup_at={warmup_iters}, active={warmup_done}")
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
@@ -145,6 +147,12 @@ def train_one_epoch(
         if args.use_ema:
             if epoch >= args.ema_epoch:
                 ema_m.update(model)
+        # TPA step increment
+        if getattr(args, "use_tpa", False):
+            _base = model.module if hasattr(model, "module") else model
+            _tpa = getattr(_base, "tpa", None)
+            if _tpa is not None:
+                _tpa.step()
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         del samples
