@@ -47,11 +47,12 @@ def train_one_epoch(
         base_model = model.module if hasattr(model, "module") else model
         tpa = getattr(base_model, "tpa", None)
         if tpa is not None:
-            warmup_done = tpa.warmup_done
             step = tpa.current_step.item()
             total = tpa.total_steps.item()
-            warmup_iters = int(total * tpa.warmup_ratio) if total > 0 else 0
-            print(f"[TPA] epoch={epoch}, step={step}/{total}, warmup_at={warmup_iters}, active={warmup_done}")
+            ws = tpa.warmup_steps
+            lam_orth, lam_div = tpa._effective_lambdas()
+            print(f"[TPA] epoch={epoch}, step={step}/{total}, warmup_steps={ws}, "
+                  f"lambda_orth={lam_orth:.4f}, lambda_div={lam_div:.4f}")
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)

@@ -113,9 +113,9 @@ in_channel=[768, 768, 768]
 
 ##### start TPA parameters #####
 use_tpa = True
-tpa_num_prototypes = 4
+tpa_num_prototypes = 5
 tpa_hidden_dim = 256
-tpa_dropout = 0.1
+tpa_dropout = 0.05
 tpa_tau = 0.07
 tpa_lambda_orth = 0.10
 tpa_lambda_div = 0.03

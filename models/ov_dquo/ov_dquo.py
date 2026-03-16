@@ -420,7 +420,7 @@ class OV_DQUO(nn.Module):
                 # [B, Q, C, K_proto]
                 sim_all = torch.einsum("bqd,ckd->bqck", roi_features, prototypes)
                 # logsumexp over prototypes → [B, Q, C]
-                clip_outputs_class = torch.logsumexp(sim_all * self.args.eval_tau, dim=-1) - math.log(K_proto)
+                clip_outputs_class = torch.logsumexp(sim_all * self.args.eval_tau, dim=-1)
             else:
                 clip_outputs_class = roi_features @ text_feature.t()
                 clip_outputs_class = clip_outputs_class * self.args.eval_tau

@@ -11,16 +11,16 @@ class TextPrototypeAggregator(nn.Module):
     Takes multi-prompt text embeddings [C, K_prompts, D] and produces
     K_proto prototypes per class [C, K_proto, D] via cross-attention.
 
-    Uses step-based warmup: TPA is frozen for the first `warmup_ratio` of
-    total training iterations. Before warmup, output = mean of input prompts.
+    Warmup only affects APR loss lambdas (cosine ramp 0→1).
+    TPA itself is active from step 0.
     """
 
     def __init__(
         self,
         text_dim,
-        num_prototypes=4,
+        num_prototypes=5,
         hidden_dim=256,
-        dropout=0.1,
+        dropout=0.05,
         tau=0.07,
         lambda_orth=0.10,
         lambda_div=0.03,
@@ -29,8 +29,8 @@ class TextPrototypeAggregator(nn.Module):
         super().__init__()
         self.num_prototypes = num_prototypes
         self.tau = max(float(tau), 1e-6)
-        self.lambda_orth = float(lambda_orth)
-        self.lambda_div = float(lambda_div)
+        self.lambda_orth_base = float(lambda_orth)
+        self.lambda_div_base = float(lambda_div)
         self.warmup_ratio = warmup_ratio
 
         # Cross-attention: prototype queries attend to multi-prompt keys/values
@@ -47,13 +47,12 @@ class TextPrototypeAggregator(nn.Module):
         self._init_parameters()
 
     def _init_parameters(self):
-        # key_proj: small init so initial attention ≈ uniform
-        nn.init.normal_(self.key_proj.weight, std=1e-4)
+        # All projections: Xavier uniform (matching LaMI-DETR)
+        nn.init.xavier_uniform_(self.key_proj.weight)
         nn.init.zeros_(self.key_proj.bias)
-        # value_proj: identity init so output ≈ input (preserve CLIP alignment)
-        nn.init.eye_(self.value_proj.weight)
+        nn.init.xavier_uniform_(self.value_proj.weight)
         nn.init.zeros_(self.value_proj.bias)
-        nn.init.normal_(self.prototype_queries, std=1e-4)
+        nn.init.xavier_uniform_(self.prototype_queries.unsqueeze(0)).squeeze_(0)
 
     def set_total_steps(self, total_steps):
         """Set total training steps (epochs * iters_per_epoch)."""
@@ -64,11 +63,18 @@ class TextPrototypeAggregator(nn.Module):
         self.current_step += 1
 
     @property
-    def warmup_done(self):
-        if self.total_steps.item() == 0:
-            return True
-        warmup_iters = int(self.total_steps.item() * self.warmup_ratio)
-        return self.current_step.item() >= warmup_iters
+    def warmup_steps(self):
+        total = self.total_steps.item()
+        return int(total * self.warmup_ratio) if total > 0 else 0
+
+    def _effective_lambdas(self):
+        """Cosine ramp for APR lambdas: 0 → base over warmup steps."""
+        ws = self.warmup_steps
+        if ws == 0:
+            return self.lambda_orth_base, self.lambda_div_base
+        progress = min(1.0, (self.current_step.item() + 1) / float(ws))
+        factor = 0.5 * (1.0 - math.cos(math.pi * progress))
+        return self.lambda_orth_base * factor, self.lambda_div_base * factor
 
     def forward(self, multi_prompt_embed, with_loss=True):
         """
@@ -79,13 +85,6 @@ class TextPrototypeAggregator(nn.Module):
             apr_loss: scalar tensor or None
         """
         C, K, D = multi_prompt_embed.shape
-
-        # Before warmup: return mean of input prompts expanded to K prototypes
-        if self.training and not self.warmup_done:
-            mean_embed = multi_prompt_embed.mean(dim=1, keepdim=True)  # [C, 1, D]
-            mean_embed = F.normalize(mean_embed, p=2, dim=-1)
-            prototypes = mean_embed.expand(C, self.num_prototypes, D)
-            return prototypes, torch.tensor(0.0, device=multi_prompt_embed.device)
 
         keys = self.key_proj(multi_prompt_embed)       # [C, K, hidden_dim]
         values = self.value_proj(multi_prompt_embed)    # [C, K, D]
@@ -103,21 +102,29 @@ class TextPrototypeAggregator(nn.Module):
 
         apr_loss = None
         if with_loss and self.training:
-            apr_loss = self._compute_apr_loss(prototypes)
+            apr_loss = self._compute_apr_loss(prototypes, attn_logits)
 
         return prototypes, apr_loss
 
-    def _compute_apr_loss(self, prototypes):
-        """APR: orthogonality + diversity regularization."""
-        # Orthogonality: prototypes within same class should be orthogonal
-        proto_norm = F.normalize(prototypes, p=2, dim=-1)
-        sim_matrix = torch.bmm(proto_norm, proto_norm.transpose(1, 2))  # [C, K, K]
-        eye = self._eye.to(sim_matrix.device)
-        ortho_loss = (sim_matrix - eye).pow(2).mean()
+    def _compute_apr_loss(self, prototypes, attn_logits):
+        """APR: orthogonality + diversity with cosine-ramped lambdas."""
+        lambda_orth, lambda_div = self._effective_lambdas()
 
-        # Diversity: encourage spread of prototypes around class mean
-        mean_proto = proto_norm.mean(dim=1, keepdim=True)  # [C, 1, D]
-        div_loss = -(proto_norm - mean_proto).pow(2).sum(dim=-1).mean()
+        # Orthogonality: off-diagonal of Gram matrix → 0
+        P = F.normalize(prototypes, p=2, dim=-1)
+        K = self.num_prototypes
+        G = torch.bmm(P, P.transpose(1, 2))  # [C, K, K]
+        eye = self._eye.to(G.device)
+        off_mask = 1.0 - eye
+        ortho_loss = ((G - eye).pow(2) * off_mask).sum(dim=(-2, -1)).mean() / (K * K - K)
 
-        apr_loss = self.lambda_orth * ortho_loss + self.lambda_div * div_loss
+        # Diversity: entropy of prototype usage (from attention logits)
+        # attn_logits: [C, K, N_prompts]
+        w = torch.softmax(attn_logits, dim=1)  # normalize over prototypes → [C, K, N]
+        votes = w.sum(dim=-1)  # [C, K] how much each prototype is used
+        p = votes / (votes.sum(dim=1, keepdim=True) + 1e-8)
+        entropy = -(p * p.clamp_min(1e-8).log()).sum(dim=1) / math.log(K)  # normalized entropy [C]
+        div_loss = entropy.mean()
+
+        apr_loss = lambda_orth * ortho_loss + lambda_div * div_loss
         return apr_loss
