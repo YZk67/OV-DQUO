@@ -52,10 +52,8 @@ class TextPrototypeAggregator(nn.Module):
         nn.init.zeros_(self.key_proj.bias)
         nn.init.xavier_uniform_(self.value_proj.weight)
         nn.init.zeros_(self.value_proj.bias)
-        with torch.no_grad():
-            tmp = torch.empty(1, *self.prototype_queries.shape)
-            nn.init.xavier_uniform_(tmp)
-            self.prototype_queries.copy_(tmp.squeeze(0))
+        nn.init.xavier_uniform_(self.prototype_queries.data.unsqueeze(0))
+        # .data bypasses autograd, so in-place on the view is safe
 
     def set_total_steps(self, total_steps):
         """Set total training steps (epochs * iters_per_epoch)."""
