@@ -127,7 +127,7 @@ multi_prompt_text_embed = "pretrained/lvis_multi_prompt_evaclip_vitb_16.pt"
 
 
 ##### start inference parameters ##### 
-eval_tau = 100
+eval_tau = 1
 objectness_alpha = 1.0
 nms_iou_threshold = 0.5
 target_class_factor=8.0
