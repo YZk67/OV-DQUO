@@ -47,10 +47,10 @@ class TextPrototypeAggregator(nn.Module):
         self._init_parameters()
 
     def _init_parameters(self):
-        # All projections: Xavier uniform (matching LaMI-DETR)
         nn.init.xavier_uniform_(self.key_proj.weight)
         nn.init.zeros_(self.key_proj.bias)
-        nn.init.xavier_uniform_(self.value_proj.weight)
+        # Identity init for value_proj: TPA starts ≈ original CLIP embeddings
+        nn.init.eye_(self.value_proj.weight)
         nn.init.zeros_(self.value_proj.bias)
         nn.init.xavier_uniform_(self.prototype_queries.data.unsqueeze(0))
         # .data bypasses autograd, so in-place on the view is safe
