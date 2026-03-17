@@ -421,9 +421,8 @@ class OV_DQUO(nn.Module):
                 sim_all = torch.einsum("bqd,ckd->bqck", roi_features, prototypes)
                 # logsumexp over prototypes → [B, Q, C]
                 # Use agg_tau for soft prototype aggregation, then scale by eval_tau for classification
-                agg_tau = getattr(self.args, 'agg_tau', 1.0)
-                clip_outputs_class = torch.logsumexp(sim_all * agg_tau, dim=-1) / agg_tau
-                clip_outputs_class = clip_outputs_class * self.args.eval_tau
+                agg_tau = getattr(self.args, 'agg_tau', self.args.eval_tau)
+                clip_outputs_class = torch.logsumexp(sim_all * agg_tau, dim=-1) * (self.args.eval_tau / agg_tau)
             else:
                 clip_outputs_class = roi_features @ text_feature.t()
                 clip_outputs_class = clip_outputs_class * self.args.eval_tau
