@@ -203,8 +203,10 @@ def evaluate(
 ):
     model.eval()
     criterion.eval()
-    if args.dataset_file == "ovlvis" and epoch and utils.get_rank()==0 and not os.path.exists(os.path.join(output_dir,f"epoch_{epoch}")):
-        os.mkdir(os.path.join(output_dir,f"epoch_{epoch}"))
+    if args.dataset_file == "ovlvis" and epoch is not None and utils.get_rank()==0:
+        os.makedirs(os.path.join(output_dir,f"epoch_{epoch}"), exist_ok=True)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = "Test:"
     if args.dataset_file == "ovlvis":
