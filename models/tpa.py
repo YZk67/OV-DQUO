@@ -36,6 +36,7 @@ class TextPrototypeAggregator(nn.Module):
         # Cross-attention: prototype queries attend to multi-prompt keys/values
         self.key_proj = nn.Linear(text_dim, hidden_dim)
         self.value_proj = nn.Linear(text_dim, text_dim)
+        self.value_gate = nn.Parameter(torch.zeros(1))  # starts at 0 → pure skip
         self.prototype_queries = nn.Parameter(torch.empty(num_prototypes, hidden_dim))
         self.dropout = nn.Dropout(dropout)
 
@@ -49,8 +50,8 @@ class TextPrototypeAggregator(nn.Module):
     def _init_parameters(self):
         nn.init.xavier_uniform_(self.key_proj.weight)
         nn.init.zeros_(self.key_proj.bias)
-        # Identity init for value_proj: TPA starts ≈ original CLIP embeddings
-        nn.init.eye_(self.value_proj.weight)
+        # Xavier init for value_proj; gate=0 ensures output ≈ input at step 0
+        nn.init.xavier_uniform_(self.value_proj.weight)
         nn.init.zeros_(self.value_proj.bias)
         nn.init.xavier_uniform_(self.prototype_queries.data.unsqueeze(0))
         # .data bypasses autograd, so in-place on the view is safe
@@ -88,7 +89,8 @@ class TextPrototypeAggregator(nn.Module):
         C, K, D = multi_prompt_embed.shape
 
         keys = self.key_proj(multi_prompt_embed)       # [C, K, hidden_dim]
-        values = self.value_proj(multi_prompt_embed)    # [C, K, D]
+        # Residual + gate: at init gate=0 → values ≡ input (CLIP space preserved)
+        values = multi_prompt_embed + self.value_gate * self.value_proj(multi_prompt_embed)  # [C, K, D]
 
         queries = self.prototype_queries.unsqueeze(0).expand(C, -1, -1)  # [C, num_proto, hidden_dim]
 

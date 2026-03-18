@@ -51,8 +51,10 @@ def train_one_epoch(
             total = tpa.total_steps.item()
             ws = tpa.warmup_steps
             lam_orth, lam_div = tpa._effective_lambdas()
+            gate_val = tpa.value_gate.item() if hasattr(tpa, "value_gate") else None
             print(f"[TPA] epoch={epoch}, step={step}/{total}, warmup_steps={ws}, "
-                  f"lambda_orth={lam_orth:.4f}, lambda_div={lam_div:.4f}")
+                  f"lambda_orth={lam_orth:.4f}, lambda_div={lam_div:.4f}"
+                  + (f", value_gate={gate_val:.6f}" if gate_val is not None else ""))
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
