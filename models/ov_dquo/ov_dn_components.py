@@ -19,6 +19,7 @@ def prepare_for_cdn_ov(
     num_classes,
     text_embbeding,
     label_enc_embbeding,
+    use_hard_neg=False,
 ):
     device = text_embbeding.device
     if training:
@@ -78,6 +79,16 @@ def prepare_for_cdn_ov(
             chosen_indice = torch.nonzero(p < (label_noise_ratio * 0.5)).view(-1)  # half of bbox prob
             new_label = torch.randint_like(chosen_indice, 0, num_classes)  # randomly put a new one here
             known_labels_expaned = known_labels_expaned.scatter(0, chosen_indice, new_label)
+        # Hard negative denoising: for negative pseudo queries, use hardest base class
+        if use_hard_neg:
+            hard_neg_cats = torch.cat([t.get('hard_neg_class', torch.tensor([], dtype=torch.long, device=device))
+                                       for t in targets])
+            if len(hard_neg_cats) > 0:
+                # hard_neg_cats has same length as labels (one per pseudo box)
+                # Repeat to match the expanded structure: 2*dn_number copies
+                hard_neg_expanded = hard_neg_cats.repeat(2 * dn_number)
+                # Override negative positions with hard negative class
+                known_labels_expaned[negative_idx] = hard_neg_expanded[negative_idx]
         if box_noise_scale > 0:
             known_bbox_ = torch.zeros_like(known_bboxs)
             known_bbox_[:, :2] = known_bboxs[:, :2] - known_bboxs[:, 2:] / 2
@@ -181,6 +192,10 @@ def targets_preprocess(targets):
                 new_target_i['boxes']=new_target_i['boxes'][0].unsqueeze(0)
                 new_target_i['labels']=new_target_i['labels'][0].unsqueeze(0)
                 new_target_i['weight']=new_target_i['weight'][0].unsqueeze(0)
+                # fallback: use class 0 as hard neg for the real annotation
+                if 'hard_neg_class' in new_target_i:
+                    new_target_i['hard_neg_class'] = torch.zeros(1, dtype=torch.long,
+                                                                  device=new_target_i['boxes'].device)
                 new_target[i]=new_target_i
                 break
     return new_target

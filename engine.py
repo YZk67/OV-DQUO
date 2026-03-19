@@ -181,8 +181,10 @@ def evaluate(
 ):
     model.eval()
     criterion.eval()
-    if args.dataset_file == "ovlvis" and epoch and utils.get_rank()==0 and not os.path.exists(os.path.join(output_dir,f"epoch_{epoch}")):
-        os.mkdir(os.path.join(output_dir,f"epoch_{epoch}"))
+    if args.dataset_file == "ovlvis" and epoch is not None and utils.get_rank()==0:
+        os.makedirs(os.path.join(output_dir,f"epoch_{epoch}"), exist_ok=True)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = "Test:"
     if args.dataset_file == "ovlvis":
@@ -277,26 +279,30 @@ def evaluate(
     if args.dataset_file == "ovlvis":
         stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
         rank = utils.get_rank()
-        if epoch is not None: # 训练期间只保存，不验证
-            torch.save(lvis_results, os.path.join(output_dir,f"epoch_{epoch}",f"pred_{rank}.pth"))
-            if torch.distributed.is_initialized():
-                torch.distributed.barrier()
+        if epoch is not None:
+            save_dir = os.path.join(output_dir, f"epoch_{epoch}")
+            torch.save(lvis_results, os.path.join(save_dir, f"pred_{rank}.pth"))
         else:
-            torch.save(lvis_results, os.path.join(output_dir,f"pred_{rank}.pth"))
-            if torch.distributed.is_initialized():
-                torch.distributed.barrier()
-            if rank == 0:
-                world_size = utils.get_world_size()
-                for i in range(1, world_size):
-                    temp = torch.load(output_dir + f"/pred_{i}.pth")
-                    lvis_results += temp
-                lvis_results = LVISResults(base_ds, lvis_results, max_dets=300)
-                for iou_type in iou_types:
-                    lvis_eval = LVISEval(base_ds, lvis_results, iou_type)
-                    lvis_eval.run()
-                    lvis_eval.print_results()
-            if rank == 0:
-                stats.update(lvis_eval.get_results())
+            save_dir = output_dir
+            torch.save(lvis_results, os.path.join(save_dir, f"pred_{rank}.pth"))
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        if rank == 0:
+            world_size = utils.get_world_size()
+            all_results = list(lvis_results)
+            for i in range(1, world_size):
+                temp = torch.load(os.path.join(save_dir, f"pred_{i}.pth"))
+                all_results += temp
+            lvis_results_obj = LVISResults(base_ds, all_results, max_dets=300)
+            for iou_type in iou_types:
+                lvis_eval = LVISEval(base_ds, lvis_results_obj, iou_type)
+                lvis_eval.run()
+                lvis_eval.print_results()
+            stats.update(lvis_eval.get_results())
+            if epoch is not None:
+                print(f"[Epoch {epoch}] LVIS eval results: {lvis_eval.get_results()}")
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
         return stats, None
     
     else:

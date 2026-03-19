@@ -182,12 +182,16 @@ class OV_DQUO(nn.Module):
     ):
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
+        sw_feature = None  # semantic wildcard features
         if self.training:
             assert self.args.pseudo_box != ""
             with torch.no_grad():
                 if "RN" in self.args.backbone:
                     categories.append(self.args.wildcard) # add wildcard embed
                     text_feature = self.classifier(categories)
+                    # encode semantic wildcards
+                    if getattr(self.args, 'use_semantic_wildcard', False):
+                        sw_feature = self.classifier(self.args.semantic_wildcards)
                 else:
                     assert self.args.num_label_sampled > 0
                     text_feature=self.classifier[categories]
@@ -227,6 +231,34 @@ class OV_DQUO(nn.Module):
                 srcs.append(src)
                 masks.append(mask)
                 clip_pos_embeds.append(pos_l)
+        # compute hard negatives for pseudo boxes before denoising
+        if self.dn_number > 0 and self.training and getattr(self.args, 'use_hard_neg_dn', False):
+            with torch.no_grad():
+                if "RN" in self.args.backbone:
+                    hn_src = ori_clip_features["layer4"]
+                else:
+                    hn_src = ori_clip_features["dense"]
+                hn_sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum())
+                            for m in hn_src.decompose()[1]]
+                base_text = text_feature[:-1]  # exclude wildcard
+                for i, target in enumerate(targets):
+                    pm = target['pseudo_mask'].to(torch.bool)
+                    pb = target['boxes'][pm]
+                    if len(pb) > 0:
+                        if "RN" in self.args.backbone:
+                            roi = sample_feature_rn(
+                                [hn_sizes[i]], pb.unsqueeze(0),
+                                hn_src.tensors[i:i+1], self.args, self.backbone)
+                        else:
+                            roi = sample_feature_vit(
+                                [hn_sizes[i]], pb.unsqueeze(0),
+                                hn_src.tensors[i:i+1])
+                        roi = roi[0]  # [num_pseudo, D]
+                        sim = roi @ base_text.t()  # [num_pseudo, num_base]
+                        target['hard_neg_class'] = sim.argmax(dim=-1)
+                    else:
+                        target['hard_neg_class'] = torch.tensor(
+                            [], dtype=torch.long, device=samples.tensors.device)
         # for ov dn
         if self.dn_number > 0 and self.training:
             proj_text_feature = self.transformer.text_proj(text_feature)
@@ -242,6 +274,7 @@ class OV_DQUO(nn.Module):
                 num_classes=len(proj_text_feature),
                 text_embbeding=proj_text_feature,
                 label_enc_embbeding=self.label_enc,
+                use_hard_neg=getattr(self.args, 'use_hard_neg_dn', False),
             )
         else:
             dn_query_label = None
@@ -267,6 +300,7 @@ class OV_DQUO(nn.Module):
             raw_text_feats=text_feature,
             targets=targets,
             backbone=self.backbone,
+            semantic_wildcards=sw_feature,
         )
         outputs_coord_list = []
         for _, (layer_ref_sig, layer_bbox_embed, layer_hs) in enumerate(

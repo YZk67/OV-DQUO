@@ -20,7 +20,8 @@ class OVDeformableTransformer(DeformableTransformer):
         raw_visual_feats=None,
         raw_text_feats=None,
         targets=None,
-        backbone=None
+        backbone=None,
+        semantic_wildcards=None,
     ):
         src_flatten = []
         mask_flatten = []
@@ -119,6 +120,7 @@ class OVDeformableTransformer(DeformableTransformer):
             raw_text_feats=raw_text_feats,
             targets=targets,
             backbone=backbone,
+            semantic_wildcards=semantic_wildcards,
         )
         if refpoint_embed is not None:
             refpoint_embed = torch.cat([refpoint_embed, query], dim=1)
@@ -180,6 +182,7 @@ class OVDeformableTransformer(DeformableTransformer):
                        raw_text_feats,
                        targets,
                        backbone,
+                       semantic_wildcards=None,
                        ):
         if "RN" in self.args.backbone:
             src_feature = raw_visual_feats["layer4"] # C5 in ResNet
@@ -188,7 +191,7 @@ class OVDeformableTransformer(DeformableTransformer):
         text_feature = raw_text_feats
         if self.args.pseudo_box and self.training:
             pseudo_feature=text_feature[-1]
-            text_feature=text_feature[:-1] # remove wildcard embedding 
+            text_feature=text_feature[:-1] # remove wildcard embedding
             mask=get_match_pseudo_idx(region_proposals.sigmoid(),targets)
         sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
         with torch.no_grad():
@@ -216,23 +219,46 @@ class OVDeformableTransformer(DeformableTransformer):
                 outputs_class[:, :, target_index] = (
                     outputs_class[:, :, target_index] * self.args.target_class_factor
                 )
-            outputs_class = outputs_class[:, :, :-1]  
+            outputs_class = outputs_class[:, :, :-1]
             classes_ = outputs_class.max(-1)[1]
             if self.args.pseudo_box and self.training:
-                classes_[mask] = self.args.num_label_sampled    # override pseudo class 
-            classes_, indices = classes_.sort(-1) 
+                classes_[mask] = self.args.num_label_sampled    # override pseudo class
+            classes_, indices = classes_.sort(-1)
             indices = indices.unsqueeze(-1).expand(
                 indices.size(0), indices.size(1), 4
             )  #  bs,num_query,  4
         query_box = torch.gather(region_proposals, 1, indices)
         if self.args.pseudo_box and self.training:
             text_feature=torch.cat((text_feature,pseudo_feature.unsqueeze(0)),dim=0)
-        projected_text = self.text_proj(text_feature) 
+        projected_text = self.text_proj(text_feature)
         if classes_.dim() == 3:
             used_classes_ = classes_[:, :, 0]
         else:
             used_classes_ = classes_
         query_features = (F.one_hot(used_classes_, num_classes=text_feature.size(0)).to(text_feature.dtype)@ projected_text)
+
+        # Semantic wildcard: replace pseudo query features with best-matching super-category
+        if semantic_wildcards is not None and self.training and self.args.pseudo_box:
+            pseudo_sorted_mask = (used_classes_ == self.args.num_label_sampled)
+            if pseudo_sorted_mask.any():
+                with torch.no_grad():
+                    # Sort roi_features the same way as queries
+                    sort_idx = indices[:, :, 0:1].expand(-1, -1, roi_features.size(-1))
+                    sorted_roi = torch.gather(roi_features, 1, sort_idx)
+                    # Similarity between sorted roi features and semantic wildcards
+                    sw_sim = sorted_roi @ semantic_wildcards.t()  # [bs, nq, N_sw]
+                    best_sw = sw_sim.argmax(dim=-1)  # [bs, nq]
+                # Project semantic wildcards through text_proj
+                projected_sw = self.text_proj(semantic_wildcards)  # [N_sw, hidden_dim]
+                # Build per-query semantic wildcard features
+                sw_query_features = projected_sw[best_sw]  # [bs, nq, hidden_dim]
+                # Replace only pseudo query features
+                query_features = torch.where(
+                    pseudo_sorted_mask.unsqueeze(-1).expand_as(query_features),
+                    sw_query_features,
+                    query_features,
+                )
+
         return classes_, query_features, query_box
 
 def build_ov_deformable_transformer(args):

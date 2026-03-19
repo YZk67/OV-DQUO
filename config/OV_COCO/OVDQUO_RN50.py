@@ -109,6 +109,14 @@ in_channel=[512, 1024]
 ##### end open-vocabulary training parameters ##### 
 
 
+##### start semantic wildcard & hard negative dn parameters #####
+use_semantic_wildcard = True
+semantic_wildcards = ["animal", "vehicle", "food", "sports equipment",
+                      "personal accessory", "furniture", "device", "tool"]
+use_hard_neg_dn = True
+##### end semantic wildcard & hard negative dn parameters #####
+
+
 ##### start inference parameters ##### 
 eval_tau = 100
 objectness_alpha = 1.0
