@@ -111,6 +111,7 @@ def main():
     cfg_args.eval = True
     cfg_args.amp = True
     cfg_args.num_workers = args.num_workers
+    cfg_args.analysis = False
 
     # ── Build model ──
     print("Building model...")
