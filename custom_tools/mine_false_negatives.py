@@ -316,7 +316,7 @@ def main():
         # Get image root from config
         lvis_path = cfg_args.lvis_path
         # LVIS images are in COCO train2017
-        img_root = os.path.join(lvis_path, "coco")
+        img_root = os.path.join(lvis_path, "Images")
 
         for vi, info in enumerate(vis_samples):
             image_id = info["image_id"]
