@@ -211,15 +211,12 @@ def main():
                 continue
 
             # Get GT boxes (in original image coords)
-            gt_boxes = targets[0]["boxes"]  # already in xyxy after dataset transforms
-            # GT boxes are in normalized coords after transforms, need to scale back
+            gt_boxes = targets[0]["boxes"]  # normalized cxcywh after dataset transforms
             h, w = targets[0]["orig_size"]
-            # Actually, GT boxes from the dataset are in the transformed image space
-            # We need to compare in the same coordinate space as predictions (original image)
-            # The postprocessor scales predictions to orig_size, so we need GT in orig coords too
-            # GT boxes from LVIS are stored as [x,y,w,h] then converted to xyxy in dataset
-            # After transforms, they are normalized [0,1]. Let's scale them.
-            gt_boxes_scaled = gt_boxes.clone()
+            # Convert cxcywh -> xyxy, then scale to original image coords
+            cx, cy, bw, bh = gt_boxes.unbind(-1)
+            gt_boxes_scaled = torch.stack([cx - bw / 2, cy - bh / 2,
+                                           cx + bw / 2, cy + bh / 2], dim=-1)
             gt_boxes_scaled[:, 0::2] *= w
             gt_boxes_scaled[:, 1::2] *= h
             gt_labels = targets[0]["labels"]
@@ -339,9 +336,13 @@ def main():
 
             # Draw GT boxes in green
             gt_img = pil_img.copy()
-            # target boxes are normalized [0,1], scale to image size
+            # target boxes are normalized cxcywh [0,1], convert to xyxy and scale
             w_img, h_img = pil_img.size
             gt_boxes_vis = target["boxes"].clone()
+            # cxcywh -> xyxy
+            cx, cy, bw, bh = gt_boxes_vis.unbind(-1)
+            gt_boxes_vis = torch.stack([cx - bw / 2, cy - bh / 2,
+                                        cx + bw / 2, cy + bh / 2], dim=-1)
             gt_boxes_vis[:, 0::2] *= w_img
             gt_boxes_vis[:, 1::2] *= h_img
             gt_labels_vis = target["labels"].tolist()
