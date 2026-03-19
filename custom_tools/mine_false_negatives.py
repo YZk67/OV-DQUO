@@ -28,7 +28,7 @@ import numpy as np
 import torch
 import torch.utils.data
 from torch.utils.data import DataLoader, SequentialSampler
-from torchvision.ops import box_iou
+from torchvision.ops import box_iou, nms
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -56,6 +56,8 @@ def get_args():
                         help="Number of example images to visualize")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--nms_thresh", type=float, default=0.5,
+                        help="NMS IoU threshold to de-duplicate FN candidates per category")
     return parser.parse_args()
 
 
@@ -232,12 +234,30 @@ def main():
 
             num_fn = fn_mask.sum().item()
             if num_fn > 0:
+                fn_boxes_raw = pred_boxes[fn_mask].cpu()
+                fn_scores_raw = pred_scores[fn_mask].cpu()
+                fn_labels_raw = pred_labels[fn_mask].cpu()
+
+                # Per-class NMS to de-duplicate FN candidates
+                keep_all = []
+                for cat_id in fn_labels_raw.unique():
+                    cat_mask = fn_labels_raw == cat_id
+                    cat_indices = cat_mask.nonzero(as_tuple=True)[0]
+                    keep = nms(fn_boxes_raw[cat_mask], fn_scores_raw[cat_mask], args.nms_thresh)
+                    keep_all.append(cat_indices[keep])
+                if keep_all:
+                    keep_all = torch.cat(keep_all)
+                    fn_boxes_raw = fn_boxes_raw[keep_all]
+                    fn_scores_raw = fn_scores_raw[keep_all]
+                    fn_labels_raw = fn_labels_raw[keep_all]
+
+                num_fn = len(fn_boxes_raw)
                 images_with_fn += 1
                 total_fn_candidates += num_fn
 
-                fn_labels = pred_labels[fn_mask].cpu().tolist()
-                fn_scores = pred_scores[fn_mask].cpu().tolist()
-                fn_boxes_list = pred_boxes[fn_mask].cpu().tolist()
+                fn_labels = fn_labels_raw.tolist()
+                fn_scores = fn_scores_raw.tolist()
+                fn_boxes_list = fn_boxes_raw.tolist()
 
                 for lab in fn_labels:
                     fn_per_category[lab] += 1
@@ -317,7 +337,6 @@ def main():
 
         for vi, info in enumerate(vis_samples):
             image_id = info["image_id"]
-            # LVIS image filename: 000000XXXXXX.jpg
             img_filename = f"{image_id:012d}.jpg"
             img_path = os.path.join(img_root, "train2017", img_filename)
 
@@ -334,12 +353,8 @@ def main():
             except Exception:
                 continue
 
-            # Draw GT boxes in green
-            gt_img = pil_img.copy()
-            # target boxes are normalized cxcywh [0,1], convert to xyxy and scale
             w_img, h_img = pil_img.size
             gt_boxes_vis = target["boxes"].clone()
-            # cxcywh -> xyxy
             cx, cy, bw, bh = gt_boxes_vis.unbind(-1)
             gt_boxes_vis = torch.stack([cx - bw / 2, cy - bh / 2,
                                         cx + bw / 2, cy + bh / 2], dim=-1)
@@ -347,22 +362,24 @@ def main():
             gt_boxes_vis[:, 1::2] *= h_img
             gt_labels_vis = target["labels"].tolist()
 
-            gt_img = draw_boxes(
-                gt_img,
+            # Left panel: GT only (green)
+            left_img = pil_img.copy()
+            left_img = draw_boxes(
+                left_img,
                 gt_boxes_vis.tolist(),
                 gt_labels_vis,
                 ["green"] * len(gt_labels_vis),
                 category_names=category_list,
             )
 
-            # Draw FN candidates in red on the same image
+            # Right panel: FN candidates only (red)
+            right_img = pil_img.copy()
             fn_details = info["fn_details"]
             fn_boxes_vis = [d["box"] for d in fn_details]
             fn_labels_vis = [d["label"] for d in fn_details]
             fn_scores_vis = [d["score"] for d in fn_details]
-
-            combined_img = draw_boxes(
-                gt_img,
+            right_img = draw_boxes(
+                right_img,
                 fn_boxes_vis,
                 fn_labels_vis,
                 ["red"] * len(fn_labels_vis),
@@ -370,12 +387,26 @@ def main():
                 scores=fn_scores_vis,
             )
 
+            # Side-by-side: [GT | FN]
+            gap = 10
+            canvas = Image.new("RGB", (w_img * 2 + gap, h_img + 30), (255, 255, 255))
+            canvas.paste(left_img, (0, 30))
+            canvas.paste(right_img, (w_img + gap, 30))
+            # Draw panel titles
+            title_draw = ImageDraw.Draw(canvas)
+            try:
+                title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+            except OSError:
+                title_font = ImageFont.load_default()
+            title_draw.text((w_img // 2 - 30, 5), "GT (green)", fill="green", font=title_font)
+            title_draw.text((w_img + gap + w_img // 2 - 50, 5), "FN pseudo (red)", fill="red", font=title_font)
+
             save_path = os.path.join(args.output_dir, "vis",
                                      f"fn_{vi:03d}_img{image_id}_nfn{info['num_fn']}.jpg")
-            combined_img.save(save_path)
+            canvas.save(save_path)
 
         print(f"  Visualizations saved to {os.path.join(args.output_dir, 'vis/')}")
-        print("  GREEN = GT annotations, RED = FN candidates (high-conf pred, no GT overlap)")
+        print("  Left = GT annotations (green), Right = FN pseudo-labels after NMS (red)")
 
     print("\nDone!")
 
