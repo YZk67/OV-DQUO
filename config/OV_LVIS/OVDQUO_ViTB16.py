@@ -107,7 +107,15 @@ pseudo_box = "ow_labels/OW_LVIS_R3.json"
 object_embbed="pretrained/vitb16_object_embbed.pt"
 resolution=[1024,1024]
 in_channel=[768, 768, 768]
-##### end open-vocabulary training parameters ##### 
+##### end open-vocabulary training parameters #####
+
+
+##### start semantic wildcard & hard negative dn parameters #####
+use_semantic_wildcard = True
+semantic_wildcards = ["animal", "vehicle", "food", "sports equipment",
+                      "personal accessory", "furniture", "device", "tool"]
+use_hard_neg_dn = True
+##### end semantic wildcard & hard negative dn parameters #####
 
 
 ##### start inference parameters ##### 
