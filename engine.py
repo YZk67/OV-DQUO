@@ -279,8 +279,22 @@ def evaluate(
     if args.dataset_file == "ovlvis":
         stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
         rank = utils.get_rank()
-        if epoch is not None: # 训练期间只保存，不验证
+        if epoch is not None:
             torch.save(lvis_results, os.path.join(output_dir,f"epoch_{epoch}",f"pred_{rank}.pth"))
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
+            if rank == 0:
+                world_size = utils.get_world_size()
+                all_results = list(lvis_results)
+                for i in range(1, world_size):
+                    temp = torch.load(os.path.join(output_dir, f"epoch_{epoch}", f"pred_{i}.pth"))
+                    all_results += temp
+                lvis_res = LVISResults(base_ds, all_results, max_dets=300)
+                for iou_type in iou_types:
+                    lvis_eval = LVISEval(base_ds, lvis_res, iou_type)
+                    lvis_eval.run()
+                    lvis_eval.print_results()
+                stats.update(lvis_eval.get_results())
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
         else:
