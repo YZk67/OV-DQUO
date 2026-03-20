@@ -346,27 +346,25 @@ def main():
 
             pil_img = Image.open(img_path).convert("RGB")
 
-            # Reload GT for this image
-            idx = info["image_idx"]
-            try:
-                _, target = dataset_train[idx]
-            except Exception:
-                continue
-
+            # Load GT directly from LVIS API (avoid dataset transforms
+            # which include random flip/resize and would mis-align with
+            # the original image).
             w_img, h_img = pil_img.size
-            gt_boxes_vis = target["boxes"].clone()
-            cx, cy, bw, bh = gt_boxes_vis.unbind(-1)
-            gt_boxes_vis = torch.stack([cx - bw / 2, cy - bh / 2,
-                                        cx + bw / 2, cy + bh / 2], dim=-1)
-            gt_boxes_vis[:, 0::2] *= w_img
-            gt_boxes_vis[:, 1::2] *= h_img
-            gt_labels_vis = target["labels"].tolist()
+            ann_ids = dataset_train.lvis.get_ann_ids(img_ids=[image_id])
+            anns = dataset_train.lvis.load_anns(ann_ids)
+            gt_boxes_vis = []
+            gt_labels_vis = []
+            cat2label = dataset_train.cat2label
+            for ann in anns:
+                x, y, bw, bh = ann["bbox"]  # LVIS format: xywh
+                gt_boxes_vis.append([x, y, x + bw, y + bh])
+                gt_labels_vis.append(cat2label[ann["category_id"]])
 
             # Left panel: GT only (green)
             left_img = pil_img.copy()
             left_img = draw_boxes(
                 left_img,
-                gt_boxes_vis.tolist(),
+                gt_boxes_vis,
                 gt_labels_vis,
                 ["green"] * len(gt_labels_vis),
                 category_names=category_list,
