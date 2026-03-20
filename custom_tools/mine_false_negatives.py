@@ -139,9 +139,24 @@ def main():
         print(f"Unexpected keys: {unexpected[:5]}... ({len(unexpected)} total)")
     print("Checkpoint loaded.")
 
-    # ── Build TRAINING dataset (not val!) ──
-    print("Building training dataset...")
-    dataset_train = build_dataset(image_set="train", args=cfg_args)
+    # ── Build TRAINING dataset with VAL transforms (no random flip/crop) ──
+    # We use val transforms so predictions align with the original image coords.
+    print("Building training dataset (val transforms)...")
+    from datasets.ov_lvis import make_coco_transforms, LvisDetection
+    from pathlib import Path
+    _root = Path(cfg_args.lvis_path)
+    _ann_file = (_root / "Annotations/lvis_train_base_relabel.json"
+                 if cfg_args.label_version == 'lvis_relabel'
+                 else _root / "Annotations/lvis_v1_train_norare.json")
+    dataset_train = LvisDetection(
+        _root / "Images", _ann_file,
+        transforms=make_coco_transforms("val", cfg_args),
+        label_map=cfg_args.label_map,
+        debug=cfg_args.debug,
+        repeat_factor_sampling=False,
+        repeat_threshold=False,
+        pseudo_box='',
+    )
     category_list = dataset_train.category_list
     label2catid = dataset_train.label2catid
     num_categories = len(category_list)
