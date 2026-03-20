@@ -89,7 +89,7 @@ ema_epoch = 0
 
 
 ##### start open-vocabulary training parameters ##### 
-lr = 1.25e-4
+lr = 6.25e-5
 epochs = 30
 lr_drop = 50
 batch_size = 5
