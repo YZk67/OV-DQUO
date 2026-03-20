@@ -19,7 +19,7 @@ from util.utils import ModelEma
 import util.misc as utils
 import datasets
 from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch
+from engine import evaluate, train_one_epoch, mine_pseudo_labels
 
 
 def get_args_parser():
@@ -46,6 +46,13 @@ def get_args_parser():
     parser.add_argument("--eval_start_epoch",default=20, type=int,help="evaluate after the j_th epoch")
     parser.add_argument("--amp", action="store_true", help="Train with mixed precision")
     parser.add_argument("--analysis", action="store_true", help="whether to analysis the model result")
+    # pseudo-label mining
+    parser.add_argument("--mine_epoch", type=int, default=-1,
+                        help="Epoch at which to mine pseudo-labels from training set (-1=disabled)")
+    parser.add_argument("--mine_score_thresh", type=float, default=0.7,
+                        help="Min score for pseudo-label candidates")
+    parser.add_argument("--mine_iou_thresh", type=float, default=0.3,
+                        help="Max IoU with GT for pseudo-label candidates")
     # distributed training parameters
     parser.add_argument("--world_size", default=1, type=int, help="number of distributed processes")
     parser.add_argument("--dist_url", default="env://", help="url used to set up distributed training")
@@ -254,6 +261,51 @@ def main(args):
         epoch_start_time = time.time()
         if args.distributed:
             sampler_train.set_epoch(epoch)
+
+        # ── Pseudo-label mining at designated epoch ──
+        if epoch == args.mine_epoch and args.dataset_file == "ovlvis":
+            logger.info(f"[Mining] Starting pseudo-label mining at epoch {epoch}")
+            from datasets import build_train_for_mining
+            dataset_mine = build_train_for_mining(args)
+            if args.distributed:
+                sampler_mine = DistributedSampler(dataset_mine, shuffle=False)
+            else:
+                sampler_mine = torch.utils.data.SequentialSampler(dataset_mine)
+            data_loader_mine = DataLoader(
+                dataset_mine, batch_size=1, sampler=sampler_mine, drop_last=False,
+                collate_fn=utils.CollateFn(args.resolution) if "EVA" in args.backbone else utils.collate_fn,
+                num_workers=args.num_workers,
+            )
+            pseudo_path = mine_pseudo_labels(
+                model_without_ddp if not args.distributed else model,
+                postprocessors,
+                data_loader_mine,
+                device,
+                args.output_dir,
+                args=args,
+            )
+            # Rebuild training dataset with mined pseudo-labels
+            args.pseudo_box = pseudo_path
+            logger.info(f"[Mining] Rebuilding training dataset with pseudo-labels from {pseudo_path}")
+            dataset_train = build_dataset(image_set='train', args=args)
+            if args.distributed:
+                if args.repeat_factor_sampling and args.dataset_file == "ovlvis":
+                    sampler_train = DistributedWeightedSampler(dataset_train, weight=dataset_train.rep_factors)
+                else:
+                    sampler_train = DistributedSampler(dataset_train)
+                sampler_train.set_epoch(epoch)
+            else:
+                sampler_train = torch.utils.data.RandomSampler(dataset_train)
+            batch_sampler_train = torch.utils.data.BatchSampler(
+                sampler_train, args.batch_size, drop_last=True)
+            data_loader_train = DataLoader(
+                dataset_train, batch_sampler=batch_sampler_train,
+                collate_fn=utils.CollateFn(args.resolution) if "EVA" in args.backbone else utils.collate_fn,
+                num_workers=args.num_workers,
+            )
+            del dataset_mine, data_loader_mine
+            logger.info(f"[Mining] Done. Training continues with pseudo-labels.")
+
         train_stats = train_one_epoch(
             model,
             criterion,

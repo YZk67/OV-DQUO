@@ -222,7 +222,7 @@ def make_coco_transforms(image_set, args):
 def build(image_set, args):
     root = Path(args.lvis_path)
     assert root.exists(), f"provided LVIS path {root} does not exist"
-    PATHS = {"train": (root / "Images", 
+    PATHS = {"train": (root / "Images",
                   root / "Annotations/lvis_v1_train_norare.json"),
                 "val": (root / "Images",
                 root / "Annotations/lvis_v1_val.json"),}
@@ -238,5 +238,26 @@ def build(image_set, args):
         repeat_factor_sampling=args.repeat_factor_sampling and image_set == 'train',
         repeat_threshold=args.repeat_threshold and image_set == 'train',
         pseudo_box=args.pseudo_box if image_set == 'train' else '',
+    )
+    return dataset
+
+
+def build_train_for_mining(args):
+    """Build training dataset with val transforms (no random flip/crop) for pseudo-label mining."""
+    root = Path(args.lvis_path)
+    assert root.exists(), f"provided LVIS path {root} does not exist"
+    if args.label_version == 'lvis_relabel':
+        ann_file = root / "Annotations/lvis_train_base_relabel.json"
+    else:
+        ann_file = root / "Annotations/lvis_v1_train_norare.json"
+    dataset = LvisDetection(
+        root / "Images",
+        ann_file,
+        transforms=make_coco_transforms("val", args),  # val transforms: no flip/crop
+        label_map=args.label_map,
+        debug=args.debug,
+        repeat_factor_sampling=False,
+        repeat_threshold=False,
+        pseudo_box='',
     )
     return dataset

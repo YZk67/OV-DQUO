@@ -168,6 +168,165 @@ def train_one_epoch(
     return resstat
 
 @torch.no_grad()
+def mine_pseudo_labels(
+    model,
+    postprocessors,
+    data_loader,
+    device,
+    output_dir,
+    args=None,
+):
+    """Mine pseudo-labels from high-confidence predictions that don't overlap with GT.
+
+    Runs the model on the training set (with val transforms), collects predictions
+    that are high-confidence but don't match any GT box, and saves them as
+    pseudo-label JSON in the format expected by LvisDetection.
+    """
+    from torchvision.ops import box_iou, nms
+    from collections import defaultdict
+
+    model.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = "Mining pseudo-labels:"
+
+    score_thresh = getattr(args, "mine_score_thresh", 0.7)
+    iou_thresh = getattr(args, "mine_iou_thresh", 0.3)
+    nms_thresh = getattr(args, "mine_nms_thresh", 0.5)
+
+    category_list = data_loader.dataset.category_list
+    label2catid = data_loader.dataset.label2catid
+
+    pseudo_annotations = []
+    total_preds = 0
+    total_pseudo = 0
+
+    if args.debug or utils.get_world_size() == 1:
+        print_freq = 10
+    else:
+        print_freq = 200
+
+    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+        samples = samples.to(device)
+        targets = [
+            {
+                k: v if isinstance(v, (list, dict)) else v.to(device)
+                for k, v in t.items()
+            }
+            for t in targets
+        ]
+
+        with torch.cuda.amp.autocast(enabled=args.amp):
+            outputs = model(samples, categories=category_list, targets=targets)
+
+        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        results = postprocessors["bbox"](outputs, orig_target_sizes)
+
+        for target, result in zip(targets, results):
+            image_id = target["image_id"].item()
+            pred_boxes = result["boxes"]      # [K, 4] xyxy original coords
+            pred_scores = result["scores"]    # [K]
+            pred_labels = result["labels"]    # [K]
+
+            # Filter by score threshold
+            high_conf = pred_scores >= score_thresh
+            pred_boxes = pred_boxes[high_conf]
+            pred_scores = pred_scores[high_conf]
+            pred_labels = pred_labels[high_conf]
+
+            total_preds += len(pred_boxes)
+            if len(pred_boxes) == 0:
+                continue
+
+            # Get GT boxes in original image coords (targets have normalized cxcywh)
+            gt_boxes = target["boxes"]  # [N, 4] normalized cxcywh
+            h, w = target["orig_size"]
+            if len(gt_boxes) > 0:
+                cx, cy, bw, bh = gt_boxes.unbind(-1)
+                gt_xyxy = torch.stack([cx - bw / 2, cy - bh / 2,
+                                       cx + bw / 2, cy + bh / 2], dim=-1)
+                gt_xyxy[:, 0::2] *= w
+                gt_xyxy[:, 1::2] *= h
+
+                ious = box_iou(pred_boxes, gt_xyxy)  # [num_pred, num_gt]
+                max_iou, _ = ious.max(dim=1)
+                fn_mask = max_iou < iou_thresh
+            else:
+                fn_mask = torch.ones(len(pred_boxes), dtype=torch.bool, device=device)
+
+            if fn_mask.sum() == 0:
+                continue
+
+            fn_boxes = pred_boxes[fn_mask].cpu()
+            fn_scores = pred_scores[fn_mask].cpu()
+            fn_labels = pred_labels[fn_mask].cpu()
+
+            # Per-class NMS to de-duplicate
+            keep_all = []
+            for cat_id in fn_labels.unique():
+                cat_mask = fn_labels == cat_id
+                cat_indices = cat_mask.nonzero(as_tuple=True)[0]
+                keep = nms(fn_boxes[cat_mask], fn_scores[cat_mask], nms_thresh)
+                keep_all.append(cat_indices[keep])
+            if keep_all:
+                keep_all = torch.cat(keep_all)
+                fn_boxes = fn_boxes[keep_all]
+                fn_scores = fn_scores[keep_all]
+                fn_labels = fn_labels[keep_all]
+
+            total_pseudo += len(fn_boxes)
+
+            # Convert to pseudo-annotation format: {image_id, category_id, bbox:[x,y,w,h], pseudo, weight, area}
+            for i in range(len(fn_boxes)):
+                x1, y1, x2, y2 = fn_boxes[i].tolist()
+                bw, bh = x2 - x1, y2 - y1
+                label_idx = fn_labels[i].item()
+                cat_id = label2catid[label_idx]
+                pseudo_annotations.append({
+                    "image_id": image_id,
+                    "category_id": cat_id,
+                    "bbox": [x1, y1, bw, bh],
+                    "area": bw * bh,
+                    "pseudo": 1,
+                    "weight": fn_scores[i].item(),
+                })
+
+    # Gather results from all GPUs
+    if utils.is_dist_avail_and_initialized():
+        gathered = [None] * utils.get_world_size()
+        torch.distributed.all_gather_object(gathered, pseudo_annotations)
+        if utils.is_main_process():
+            pseudo_annotations = []
+            for g in gathered:
+                pseudo_annotations.extend(g)
+
+    # Save on main process
+    save_path = os.path.join(output_dir, "mined_pseudo_labels.json")
+    if utils.is_main_process():
+        with open(save_path, "w") as f:
+            json.dump(pseudo_annotations, f)
+        print(f"\n[Mining] score_thresh={score_thresh}, iou_thresh={iou_thresh}")
+        print(f"[Mining] Total high-conf predictions: {total_preds}")
+        print(f"[Mining] Pseudo-labels mined: {len(pseudo_annotations)}")
+        # Per-category stats
+        cat_counts = defaultdict(int)
+        for ann in pseudo_annotations:
+            cat_counts[ann["category_id"]] += 1
+        sorted_cats = sorted(cat_counts.items(), key=lambda x: -x[1])[:20]
+        print(f"[Mining] Top-20 categories:")
+        all_cats = data_loader.dataset.all_categories
+        for rank, (cid, cnt) in enumerate(sorted_cats, 1):
+            name = all_cats.get(cid, f"cat_{cid}")
+            print(f"  {rank:2d}. {name:30s}  count={cnt}")
+        print(f"[Mining] Saved to {save_path}")
+
+    if utils.is_dist_avail_and_initialized():
+        torch.distributed.barrier()
+
+    model.train()
+    return save_path
+
+
+@torch.no_grad()
 def evaluate(
     model,
     criterion,

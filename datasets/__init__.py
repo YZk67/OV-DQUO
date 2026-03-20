@@ -5,6 +5,7 @@ from datasets.lvis import LvisDetection
 from .coco import build as build_coco
 from .ov_coco import build as build_ov_coco
 from .ov_lvis import build as build_lvis
+from .ov_lvis import build_train_for_mining
 def get_coco_api_from_dataset(dataset):
     for _ in range(10):
         if isinstance(dataset, torch.utils.data.Subset):
