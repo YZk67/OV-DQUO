@@ -166,6 +166,14 @@ class OV_DQUO(nn.Module):
 
         self.classifier = classifier
         self.args = args
+        # Load precomputed semantic wildcard embeddings for ViT
+        if getattr(args, 'use_semantic_wildcard', False) and "RN" not in args.backbone:
+            sw_embed_path = getattr(args, 'semantic_wildcard_embed', '')
+            assert sw_embed_path, "semantic_wildcard_embed path required for ViT backbone"
+            sw_dict = torch.load(sw_embed_path, map_location='cpu')
+            sw_embeds = torch.stack([sw_dict[name] for name in args.semantic_wildcards])
+            sw_embeds = F.normalize(sw_embeds, p=2, dim=1)
+            self.register_buffer('sw_feature_precomputed', sw_embeds)
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -196,6 +204,9 @@ class OV_DQUO(nn.Module):
                     assert self.args.num_label_sampled > 0
                     text_feature=self.classifier[categories]
                     text_feature=torch.cat([text_feature,self.classifier[-1][None,:]]) # add wildcard embed
+                    # encode semantic wildcards for ViT
+                    if getattr(self.args, 'use_semantic_wildcard', False):
+                        sw_feature = self.sw_feature_precomputed.to(text_feature.device)
         else:
             if "RN" in self.args.backbone:
                 text_feature=self.classifier(categories)

@@ -114,6 +114,7 @@ in_channel=[768, 768, 768]
 use_semantic_wildcard = True
 semantic_wildcards = ["animal", "vehicle", "food", "sports equipment",
                       "personal accessory", "furniture", "device", "tool"]
+semantic_wildcard_embed = "pretrained/vitb16_semantic_wildcards.pt"
 use_hard_neg_dn = True
 ##### end semantic wildcard & hard negative dn parameters #####
 
