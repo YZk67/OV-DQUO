@@ -45,10 +45,7 @@ def train_one_epoch(
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
-    if utils.get_world_size() == 1:
-        print_freq = 20
-    else:
-        print_freq = 200
+    print_freq = 200
     _cnt = 0
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
