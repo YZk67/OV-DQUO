@@ -47,8 +47,8 @@ def get_args_parser():
     parser.add_argument("--amp", action="store_true", help="Train with mixed precision")
     parser.add_argument("--analysis", action="store_true", help="whether to analysis the model result")
     # pseudo-label mining
-    parser.add_argument("--mine_epoch", type=int, default=-1,
-                        help="Epoch at which to mine pseudo-labels from training set (-1=disabled)")
+    parser.add_argument("--mine_epoch", type=int, nargs='+', default=[-1],
+                        help="Epoch(s) at which to mine pseudo-labels from training set (-1=disabled)")
     parser.add_argument("--mine_score_thresh", type=float, default=0.7,
                         help="Min score for pseudo-label candidates")
     parser.add_argument("--mine_iou_thresh", type=float, default=0.3,
@@ -263,7 +263,7 @@ def main(args):
             sampler_train.set_epoch(epoch)
 
         # ── Pseudo-label mining at designated epoch ──
-        if epoch == args.mine_epoch and args.dataset_file == "ovlvis":
+        if epoch in args.mine_epoch and args.dataset_file == "ovlvis":
             logger.info(f"[Mining] Starting pseudo-label mining at epoch {epoch}")
             from datasets import build_train_for_mining
             dataset_mine = build_train_for_mining(args)

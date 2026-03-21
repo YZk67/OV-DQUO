@@ -89,7 +89,7 @@ ema_epoch = 0
 
 
 ##### start open-vocabulary training parameters ##### 
-lr = 1.25e-5  # 1e-4 / 8 (linear scaling for single GPU)
+lr = 5e-5  # 1e-4 / 2 (linear scaling for 4 GPUs)
 epochs = 35
 lr_drop = 50
 batch_size = 4
