@@ -69,10 +69,13 @@ class ISTModule(nn.Module):
     Takes raw CLIP text embeddings and refines them using a GATv2 graph
     that encodes category relationships. Knowledge flows from base
     categories to novel ones through the graph structure.
+
+    Delta is L2-normalized so the learnable gate directly controls the
+    rotation angle: gate=0.1 → arctan(0.1)≈5.7°.
     """
 
     def __init__(self, text_dim, hidden_dim=512, num_layers=2, num_heads=4,
-                 dropout=0.1, residual_weight=0.5):
+                 dropout=0.1, gate_init=0.1):
         """
         Args:
             text_dim: dimension of CLIP text embeddings (1024 for RN50)
@@ -80,12 +83,16 @@ class ISTModule(nn.Module):
             num_layers: number of GAT layers (default 2)
             num_heads: number of attention heads
             dropout: dropout rate
-            residual_weight: weight for residual connection (0=no residual, 1=full residual)
+            gate_init: initial gate value, controls rotation angle via arctan(gate)
         """
         super().__init__()
         self.text_dim = text_dim
         self.num_layers = num_layers
-        self.residual_weight = residual_weight
+
+        # Learnable scalar gate stored as logit; sigmoid bounds it to (0, 1).
+        # gate directly controls perturbation magnitude on unit-norm delta.
+        logit_init = torch.log(torch.tensor(gate_init / (1.0 - gate_init)))
+        self.gate_logit = nn.Parameter(logit_init)
 
         # Input projection
         self.input_proj = nn.Linear(text_dim, hidden_dim)
@@ -111,36 +118,37 @@ class ISTModule(nn.Module):
         nn.init.xavier_uniform_(self.output_proj.weight)
         nn.init.zeros_(self.output_proj.bias)
 
-    def forward(self, text_features, adj):
+    def forward(self, text_features, adj, novel_mask=None):
         """
         Args:
             text_features: [num_cats, text_dim] L2-normalized CLIP text embeddings
             adj: [num_cats, num_cats] adjacency matrix
+            novel_mask: unused, kept for interface compatibility
 
         Returns:
             refined_features: [num_cats, text_dim] refined text embeddings (L2-normalized)
         """
-        # Project to hidden dim
         h = self.input_proj(text_features)  # [N, hidden_dim]
 
-        # GAT message passing
-        for i, (gat, ln) in enumerate(zip(self.gat_layers, self.layer_norms)):
+        for gat, ln in zip(self.gat_layers, self.layer_norms):
             h_new = gat(h, adj)
             h_new = F.elu(h_new)
-            h = ln(h + h_new)  # residual + layernorm within GAT
+            h = ln(h + h_new)
 
-        # Project back to text_dim
         delta = self.output_proj(h)  # [N, text_dim]
 
-        # Project delta to be orthogonal to original CLIP text features
-        # text_features is L2-normalized, so ||t||=1
+        # Orthogonal projection: remove component parallel to original CLIP features
         parallel = (delta * text_features).sum(dim=-1, keepdim=True) * text_features
         delta_orth = delta - parallel
 
-        # Additive residual in orthogonal subspace only
-        refined = text_features + self.residual_weight * delta_orth
+        # L2 normalize delta so gate directly controls rotation angle
+        delta_orth = F.normalize(delta_orth, dim=-1)
 
-        # L2 normalize to stay in CLIP embedding space
+        gate = torch.sigmoid(self.gate_logit)
+
+        # refined = unit_text + gate * unit_delta_orth, then re-normalize
+        # rotation angle = arctan(gate), e.g. gate=0.1 → 5.7°
+        refined = text_features + gate * delta_orth
         refined = F.normalize(refined, dim=-1)
 
         return refined

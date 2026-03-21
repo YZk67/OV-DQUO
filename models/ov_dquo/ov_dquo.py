@@ -173,17 +173,19 @@ class OV_DQUO(nn.Module):
         if self.use_ist:
             ist_graph_data = torch.load(args.ist_graph_path, map_location='cpu')
             self.register_buffer('ist_adj', ist_graph_data['adj'])
+            self.register_buffer('ist_novel_mask', ist_graph_data['novel_mask'])
             self.ist_module = ISTModule(
                 text_dim=args.text_dim,
                 hidden_dim=getattr(args, 'ist_hidden_dim', 512),
                 num_layers=getattr(args, 'ist_num_layers', 2),
                 num_heads=getattr(args, 'ist_num_heads', 4),
                 dropout=getattr(args, 'ist_dropout', 0.1),
-                residual_weight=getattr(args, 'ist_residual_weight', 0.5),
+                gate_init=getattr(args, 'ist_gate_init', 0.01),
             )
             self.ist_cat_names = ist_graph_data['cat_names']
             print(f"[IST] Loaded category graph: {len(self.ist_cat_names)} categories, "
-                  f"{(self.ist_adj > 0).sum().item()} edges")
+                  f"{(self.ist_adj > 0).sum().item()} edges, "
+                  f"novel={self.ist_novel_mask.sum().item()}")
 
         self._reset_parameters()
 
@@ -412,34 +414,27 @@ class OV_DQUO(nn.Module):
     def _apply_ist(self, text_feature, categories, has_wildcard=False):
         """Apply IST to refine text features using the category graph.
 
-        When all 65 categories are present (OV-COCO), we run IST on the full graph.
-        When a subset is used, we map categories to graph indices, run IST on
-        the full graph, and extract the refined features for the subset.
+        All 65 categories are refined. Delta is L2-normalized and scaled by
+        a learnable gate so perturbation magnitude is controlled.
+        Wildcard embedding is not modified.
         """
-        # Build mapping: category name -> index in ist_cat_names
         cat_to_ist_idx = {name: i for i, name in enumerate(self.ist_cat_names)}
 
-        # Get indices for current categories in the IST graph
         ist_indices = []
         for cat in categories:
             if cat in cat_to_ist_idx:
                 ist_indices.append(cat_to_ist_idx[cat])
-            # skip categories not in graph (shouldn't happen for OV-COCO)
 
         if len(ist_indices) == len(self.ist_cat_names):
-            # All categories present — run IST on full graph directly
             if has_wildcard:
                 refined = self.ist_module(text_feature[:-1], self.ist_adj)
                 text_feature = torch.cat([refined, text_feature[-1:]], dim=0)
             else:
                 text_feature = self.ist_module(text_feature, self.ist_adj)
         elif len(ist_indices) > 0:
-            # Subset of categories — run IST on full graph, extract subset
-            # First get full text features for all graph categories
             with torch.no_grad():
                 full_text = self.classifier(list(self.ist_cat_names))
             refined_full = self.ist_module(full_text, self.ist_adj)
-            # Replace the subset features
             ist_indices_t = torch.tensor(ist_indices, device=text_feature.device)
             refined_subset = refined_full[ist_indices_t]
             if has_wildcard:
