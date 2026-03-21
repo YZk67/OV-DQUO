@@ -89,7 +89,7 @@ ema_epoch = 0
 
 
 ##### start open-vocabulary training parameters ##### 
-lr = 1.25e-4
+lr = 1e-4
 epochs = 30
 lr_drop = 50
 batch_size = 5
@@ -107,6 +107,17 @@ backbone_out_indice=[1, 2, 3] # C3, C4, C5
 pseudo_box = "ow_labels/OW_COCO_R2.json"
 in_channel=[512, 1024]
 ##### end open-vocabulary training parameters ##### 
+
+
+##### start IST parameters #####
+use_ist = True
+ist_graph_path = "pretrained/ovcoco_ist_adj.pt"
+ist_hidden_dim = 512
+ist_num_layers = 2
+ist_num_heads = 4
+ist_dropout = 0.1
+ist_residual_weight = 0.5
+##### end IST parameters #####
 
 
 ##### start inference parameters ##### 
