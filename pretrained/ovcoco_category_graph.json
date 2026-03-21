@@ -1,0 +1,146 @@
+{
+    "_description": "IST category relationship graph for OV-COCO (48 base + 17 novel). Each novel category maps to related base categories with association strength (3=High, 2=Medium, 1=Low). Edges are directed: base -> novel for knowledge transfer.",
+    "_base_categories": ["person", "bicycle", "car", "motorcycle", "train", "truck", "boat", "bench", "bird", "horse", "sheep", "bear", "zebra", "giraffe", "backpack", "handbag", "suitcase", "frisbee", "skis", "kite", "surfboard", "bottle", "fork", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "pizza", "donut", "chair", "bed", "toilet", "tv", "laptop", "mouse", "remote", "microwave", "oven", "toaster", "refrigerator", "book", "clock", "vase", "toothbrush"],
+    "_novel_categories": ["airplane", "bus", "cat", "dog", "cow", "elephant", "umbrella", "tie", "snowboard", "skateboard", "cup", "knife", "cake", "couch", "keyboard", "sink", "scissors"],
+    "graph": {
+        "airplane": {
+            "bird":        {"strength": 2, "relation": "co-occurrence", "reason": "both fly in the sky"},
+            "kite":        {"strength": 2, "relation": "co-occurrence", "reason": "both seen in sky scenes"},
+            "car":         {"strength": 2, "relation": "is-a/hypernym", "reason": "both are vehicles/transportation"},
+            "train":       {"strength": 2, "relation": "is-a/hypernym", "reason": "both are transportation"},
+            "truck":       {"strength": 2, "relation": "is-a/hypernym", "reason": "both are vehicles"},
+            "boat":        {"strength": 2, "relation": "is-a/hypernym", "reason": "both are transportation"},
+            "person":      {"strength": 1, "relation": "co-occurrence", "reason": "passengers near airplanes"}
+        },
+        "bus": {
+            "car":         {"strength": 3, "relation": "is-a/hypernym", "reason": "both are road vehicles"},
+            "truck":       {"strength": 3, "relation": "is-a/hypernym", "reason": "both are large road vehicles"},
+            "motorcycle":  {"strength": 2, "relation": "is-a/hypernym", "reason": "both are road vehicles"},
+            "train":       {"strength": 2, "relation": "functional", "reason": "both are public transportation"},
+            "bicycle":     {"strength": 1, "relation": "co-occurrence", "reason": "both on roads"},
+            "person":      {"strength": 2, "relation": "co-occurrence", "reason": "people ride buses"}
+        },
+        "cat": {
+            "horse":       {"strength": 2, "relation": "is-a/hypernym", "reason": "both are domestic animals"},
+            "sheep":       {"strength": 1, "relation": "is-a/hypernym", "reason": "both are animals"},
+            "bear":        {"strength": 2, "relation": "is-a/hypernym", "reason": "both are mammals with fur"},
+            "bird":        {"strength": 1, "relation": "co-occurrence", "reason": "both are common pets"},
+            "person":      {"strength": 2, "relation": "co-occurrence", "reason": "cats are pets, often with people"},
+            "chair":       {"strength": 1, "relation": "co-occurrence", "reason": "cats often sit on furniture"},
+            "bed":         {"strength": 1, "relation": "co-occurrence", "reason": "cats often on beds"}
+        },
+        "dog": {
+            "horse":       {"strength": 2, "relation": "is-a/hypernym", "reason": "both are domestic animals"},
+            "sheep":       {"strength": 2, "relation": "co-occurrence", "reason": "herding dogs with sheep"},
+            "bear":        {"strength": 2, "relation": "is-a/hypernym", "reason": "both are mammals"},
+            "bird":        {"strength": 1, "relation": "co-occurrence", "reason": "both are common pets"},
+            "person":      {"strength": 3, "relation": "co-occurrence", "reason": "dogs are common pets with people"},
+            "frisbee":     {"strength": 2, "relation": "co-occurrence", "reason": "dogs play with frisbees"},
+            "surfboard":   {"strength": 1, "relation": "co-occurrence", "reason": "dogs sometimes surf"}
+        },
+        "cow": {
+            "horse":       {"strength": 3, "relation": "is-a/hypernym", "reason": "both are large farm animals"},
+            "sheep":       {"strength": 3, "relation": "is-a/hypernym", "reason": "both are farm/livestock animals"},
+            "giraffe":     {"strength": 2, "relation": "is-a/hypernym", "reason": "both are large herbivores"},
+            "zebra":       {"strength": 2, "relation": "is-a/hypernym", "reason": "both are large herbivores"},
+            "bear":        {"strength": 1, "relation": "is-a/hypernym", "reason": "both are large mammals"},
+            "person":      {"strength": 1, "relation": "co-occurrence", "reason": "farm workers with cows"}
+        },
+        "elephant": {
+            "giraffe":     {"strength": 3, "relation": "co-occurrence", "reason": "both are large African wildlife"},
+            "zebra":       {"strength": 3, "relation": "co-occurrence", "reason": "both are African wildlife"},
+            "bear":        {"strength": 2, "relation": "is-a/hypernym", "reason": "both are large mammals"},
+            "horse":       {"strength": 2, "relation": "is-a/hypernym", "reason": "both are large animals"},
+            "sheep":       {"strength": 1, "relation": "is-a/hypernym", "reason": "both are herbivores"},
+            "person":      {"strength": 1, "relation": "co-occurrence", "reason": "safari/zoo scenes"}
+        },
+        "umbrella": {
+            "backpack":    {"strength": 2, "relation": "is-a/hypernym", "reason": "both are personal accessories"},
+            "handbag":     {"strength": 2, "relation": "is-a/hypernym", "reason": "both are carried items"},
+            "suitcase":    {"strength": 1, "relation": "co-occurrence", "reason": "travel accessories"},
+            "person":      {"strength": 3, "relation": "co-occurrence", "reason": "people carry umbrellas"},
+            "bench":       {"strength": 1, "relation": "co-occurrence", "reason": "outdoor scenes"}
+        },
+        "tie": {
+            "person":      {"strength": 3, "relation": "part-whole", "reason": "ties are worn by people"},
+            "suitcase":    {"strength": 2, "relation": "co-occurrence", "reason": "both are business/formal items"},
+            "backpack":    {"strength": 1, "relation": "co-occurrence", "reason": "both are personal items"},
+            "handbag":     {"strength": 1, "relation": "co-occurrence", "reason": "both are accessories"},
+            "chair":       {"strength": 1, "relation": "co-occurrence", "reason": "office/formal setting"}
+        },
+        "snowboard": {
+            "skis":        {"strength": 3, "relation": "synonym/similarity", "reason": "both are snow sports equipment"},
+            "surfboard":   {"strength": 2, "relation": "synonym/similarity", "reason": "both are board sports"},
+            "person":      {"strength": 2, "relation": "co-occurrence", "reason": "people ride snowboards"},
+            "kite":        {"strength": 1, "relation": "co-occurrence", "reason": "both are outdoor sports gear"},
+            "bench":       {"strength": 1, "relation": "co-occurrence", "reason": "benches at ski areas"}
+        },
+        "skateboard": {
+            "surfboard":   {"strength": 2, "relation": "synonym/similarity", "reason": "both are board sports"},
+            "skis":        {"strength": 2, "relation": "synonym/similarity", "reason": "both are sport equipment"},
+            "person":      {"strength": 3, "relation": "co-occurrence", "reason": "people ride skateboards"},
+            "bicycle":     {"strength": 2, "relation": "functional", "reason": "both are personal transport/sport"},
+            "backpack":    {"strength": 1, "relation": "co-occurrence", "reason": "skaters often wear backpacks"}
+        },
+        "cup": {
+            "bottle":      {"strength": 3, "relation": "synonym/similarity", "reason": "both are drinking containers"},
+            "bowl":        {"strength": 3, "relation": "synonym/similarity", "reason": "both are tableware containers"},
+            "fork":        {"strength": 2, "relation": "co-occurrence", "reason": "both are dining items"},
+            "spoon":       {"strength": 2, "relation": "co-occurrence", "reason": "both on dining table"},
+            "pizza":       {"strength": 1, "relation": "co-occurrence", "reason": "dining scene co-occurrence"},
+            "sandwich":    {"strength": 1, "relation": "co-occurrence", "reason": "dining scene co-occurrence"}
+        },
+        "knife": {
+            "fork":        {"strength": 3, "relation": "synonym/similarity", "reason": "both are cutlery"},
+            "spoon":       {"strength": 3, "relation": "synonym/similarity", "reason": "both are cutlery"},
+            "bowl":        {"strength": 2, "relation": "co-occurrence", "reason": "both on dining table"},
+            "bottle":      {"strength": 1, "relation": "co-occurrence", "reason": "dining items"},
+            "pizza":       {"strength": 1, "relation": "co-occurrence", "reason": "knife used to cut food"},
+            "sandwich":    {"strength": 1, "relation": "co-occurrence", "reason": "knife used to cut food"},
+            "banana":      {"strength": 1, "relation": "co-occurrence", "reason": "knife used with fruits"}
+        },
+        "cake": {
+            "donut":       {"strength": 3, "relation": "synonym/similarity", "reason": "both are desserts/baked goods"},
+            "pizza":       {"strength": 2, "relation": "synonym/similarity", "reason": "both are round baked food"},
+            "sandwich":    {"strength": 1, "relation": "is-a/hypernym", "reason": "both are prepared food"},
+            "banana":      {"strength": 1, "relation": "co-occurrence", "reason": "banana cake / dessert scene"},
+            "apple":       {"strength": 1, "relation": "co-occurrence", "reason": "apple cake / food scene"},
+            "bottle":      {"strength": 1, "relation": "co-occurrence", "reason": "drinks with cake"},
+            "fork":        {"strength": 2, "relation": "co-occurrence", "reason": "fork used to eat cake"},
+            "spoon":       {"strength": 1, "relation": "co-occurrence", "reason": "spoon used with cake"}
+        },
+        "couch": {
+            "chair":       {"strength": 3, "relation": "synonym/similarity", "reason": "both are seating furniture"},
+            "bed":         {"strength": 3, "relation": "synonym/similarity", "reason": "both are furniture for resting"},
+            "tv":          {"strength": 2, "relation": "co-occurrence", "reason": "couch faces TV in living rooms"},
+            "remote":      {"strength": 2, "relation": "co-occurrence", "reason": "remote used on couch"},
+            "person":      {"strength": 2, "relation": "co-occurrence", "reason": "people sit on couches"},
+            "book":        {"strength": 1, "relation": "co-occurrence", "reason": "reading on couch"}
+        },
+        "keyboard": {
+            "laptop":      {"strength": 3, "relation": "part-whole", "reason": "keyboards are part of laptops"},
+            "mouse":       {"strength": 3, "relation": "co-occurrence", "reason": "both are computer peripherals"},
+            "tv":          {"strength": 2, "relation": "co-occurrence", "reason": "monitor/TV used with keyboard"},
+            "remote":      {"strength": 1, "relation": "synonym/similarity", "reason": "both are input devices"},
+            "book":        {"strength": 1, "relation": "co-occurrence", "reason": "desk scene"},
+            "clock":       {"strength": 1, "relation": "co-occurrence", "reason": "office desk scene"}
+        },
+        "sink": {
+            "toilet":      {"strength": 3, "relation": "co-occurrence", "reason": "both are bathroom fixtures"},
+            "toothbrush":  {"strength": 3, "relation": "co-occurrence", "reason": "toothbrush used at sink"},
+            "bottle":      {"strength": 1, "relation": "co-occurrence", "reason": "bottles near sink"},
+            "oven":        {"strength": 2, "relation": "co-occurrence", "reason": "both in kitchen"},
+            "microwave":   {"strength": 2, "relation": "co-occurrence", "reason": "both in kitchen"},
+            "refrigerator":{"strength": 2, "relation": "co-occurrence", "reason": "both in kitchen"},
+            "vase":        {"strength": 1, "relation": "co-occurrence", "reason": "vase near sink with water"}
+        },
+        "scissors": {
+            "book":        {"strength": 2, "relation": "co-occurrence", "reason": "both are desk/office items"},
+            "clock":       {"strength": 1, "relation": "co-occurrence", "reason": "office desk scene"},
+            "vase":        {"strength": 1, "relation": "co-occurrence", "reason": "craft/cutting flowers"},
+            "person":      {"strength": 2, "relation": "co-occurrence", "reason": "people use scissors"},
+            "toothbrush":  {"strength": 1, "relation": "synonym/similarity", "reason": "both are small handheld tools"},
+            "remote":      {"strength": 1, "relation": "synonym/similarity", "reason": "similar elongated shape"}
+        }
+    }
+}
