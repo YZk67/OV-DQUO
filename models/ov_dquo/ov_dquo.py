@@ -214,8 +214,11 @@ class OV_DQUO(nn.Module):
                     text_feature=self.classifier[categories]
                     text_feature=torch.cat([text_feature,self.classifier[-1][None,:]]) # add wildcard embed
             # IST: refine text features (exclude wildcard at the end)
-            if self.use_ist and "RN" in self.args.backbone:
-                text_feature = self._apply_ist(text_feature, categories[:-1], has_wildcard=True)
+            if self.use_ist:
+                if "RN" in self.args.backbone:
+                    text_feature = self._apply_ist(text_feature, categories[:-1], has_wildcard=True)
+                else:
+                    text_feature = self._apply_ist_eva(text_feature, categories, has_wildcard=True)
         else:
             if "RN" in self.args.backbone:
                 text_feature=self.classifier(categories)
@@ -223,8 +226,11 @@ class OV_DQUO(nn.Module):
                 assert self.args.pseudo_box != ""
                 text_feature=self.classifier[:-1] # remove wildcard embed during ovlvis inference
             # IST: refine text features during inference
-            if self.use_ist and "RN" in self.args.backbone:
-                text_feature = self._apply_ist(text_feature, categories, has_wildcard=False)
+            if self.use_ist:
+                if "RN" in self.args.backbone:
+                    text_feature = self._apply_ist(text_feature, categories, has_wildcard=False)
+                else:
+                    text_feature = self._apply_ist_eva(text_feature, categories=None, has_wildcard=False)
         ori_clip_features, ori_clip_pos_embeds = self.backbone(samples)
         clip_features = [
             ori_clip_features[k] for k in ori_clip_features.keys() if k != "dense" and k != "layer4"# discard dense feature layer
@@ -441,6 +447,36 @@ class OV_DQUO(nn.Module):
                 text_feature = torch.cat([refined_subset, text_feature[-1:]], dim=0)
             else:
                 text_feature = refined_subset
+
+        return text_feature
+
+    def _apply_ist_eva(self, text_feature, categories=None, has_wildcard=False):
+        """Apply IST for EVA backbone (LVIS).
+
+        For EVA, self.classifier is a [N+1, dim] tensor (N categories + wildcard).
+        The IST graph has N nodes matching the first N entries of self.classifier.
+
+        Training: text_feature = classifier[sampled_indices] + wildcard
+                  categories = sampled index tensor
+        Inference: text_feature = classifier[:-1] (all N categories), categories=None
+        """
+        num_ist_cats = len(self.ist_cat_names)
+
+        # Get full text features for all categories (detach from classifier)
+        with torch.no_grad():
+            full_text = self.classifier[:num_ist_cats].clone()
+
+        # Refine all categories through IST
+        refined_full = self.ist_module(full_text, self.ist_adj)
+
+        if has_wildcard:
+            # Training: text_feature is [num_sampled + 1, dim] (sampled + wildcard)
+            # Select refined embeddings for sampled categories
+            refined_sampled = refined_full[categories]
+            text_feature = torch.cat([refined_sampled, text_feature[-1:]], dim=0)
+        else:
+            # Inference: text_feature is [N, dim] (all categories)
+            text_feature = refined_full
 
         return text_feature
 

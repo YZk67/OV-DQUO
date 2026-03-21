@@ -107,7 +107,18 @@ pseudo_box = "ow_labels/OW_LVIS_R3.json"
 object_embbed="pretrained/vitb16_object_embbed.pt"
 resolution=[1024,1024]
 in_channel=[768, 768, 768]
-##### end open-vocabulary training parameters ##### 
+##### end open-vocabulary training parameters #####
+
+
+##### start IST parameters #####
+use_ist = True
+ist_graph_path = "pretrained/lvis_ist_adj.pt"
+ist_hidden_dim = 512
+ist_num_layers = 2
+ist_num_heads = 4
+ist_dropout = 0.1
+ist_gate_init = 0.3  # fixed gate, rotation angle: arctan(0.3)≈16.7°
+##### end IST parameters #####
 
 
 ##### start inference parameters ##### 
