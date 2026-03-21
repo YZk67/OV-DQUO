@@ -89,10 +89,9 @@ class ISTModule(nn.Module):
         self.text_dim = text_dim
         self.num_layers = num_layers
 
-        # Learnable scalar gate stored as logit; sigmoid bounds it to (0, 1).
-        # gate directly controls perturbation magnitude on unit-norm delta.
-        logit_init = torch.log(torch.tensor(gate_init / (1.0 - gate_init)))
-        self.gate_logit = nn.Parameter(logit_init)
+        # Fixed gate: controls rotation angle via arctan(gate).
+        # Not learnable — forces IST to always contribute, GAT only learns direction.
+        self.gate = gate_init
 
         # Input projection
         self.input_proj = nn.Linear(text_dim, hidden_dim)
@@ -144,11 +143,8 @@ class ISTModule(nn.Module):
         # L2 normalize delta so gate directly controls rotation angle
         delta_orth = F.normalize(delta_orth, dim=-1)
 
-        gate = torch.sigmoid(self.gate_logit)
-
-        # refined = unit_text + gate * unit_delta_orth, then re-normalize
         # rotation angle = arctan(gate), e.g. gate=0.1 → 5.7°
-        refined = text_features + gate * delta_orth
+        refined = text_features + self.gate * delta_orth
         refined = F.normalize(refined, dim=-1)
 
         return refined
