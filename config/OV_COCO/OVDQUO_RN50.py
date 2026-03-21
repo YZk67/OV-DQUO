@@ -116,7 +116,7 @@ ist_hidden_dim = 512
 ist_num_layers = 2
 ist_num_heads = 4
 ist_dropout = 0.1
-ist_gate_init = 0.3  # fixed gate, rotation angle: arctan(0.3)≈16.7°
+ist_gate_init = 0.5  # fixed gate, rotation angle: arctan(0.5)≈26.6°
 ##### end IST parameters #####
 
 
