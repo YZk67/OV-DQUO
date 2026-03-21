@@ -106,9 +106,10 @@ class ISTModule(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        for m in [self.input_proj, self.output_proj]:
-            nn.init.xavier_uniform_(m.weight)
-            nn.init.zeros_(m.bias)
+        nn.init.xavier_uniform_(self.input_proj.weight)
+        nn.init.zeros_(self.input_proj.bias)
+        nn.init.xavier_uniform_(self.output_proj.weight)
+        nn.init.zeros_(self.output_proj.bias)
 
     def forward(self, text_features, adj):
         """
@@ -131,8 +132,13 @@ class ISTModule(nn.Module):
         # Project back to text_dim
         delta = self.output_proj(h)  # [N, text_dim]
 
-        # Residual connection with original text features
-        refined = self.residual_weight * text_features + (1 - self.residual_weight) * delta
+        # Project delta to be orthogonal to original CLIP text features
+        # text_features is L2-normalized, so ||t||=1
+        parallel = (delta * text_features).sum(dim=-1, keepdim=True) * text_features
+        delta_orth = delta - parallel
+
+        # Additive residual in orthogonal subspace only
+        refined = text_features + self.residual_weight * delta_orth
 
         # L2 normalize to stay in CLIP embedding space
         refined = F.normalize(refined, dim=-1)
