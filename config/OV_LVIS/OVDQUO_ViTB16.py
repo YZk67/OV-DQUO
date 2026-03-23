@@ -114,10 +114,10 @@ in_channel=[768, 768, 768]
 use_ist = True
 ist_graph_path = "pretrained/lvis_ist_adj.pt"
 ist_hidden_dim = 512
+ist_dim = 256  # IST matching space dimension
 ist_num_layers = 2
 ist_num_heads = 4
 ist_dropout = 0.1
-ist_gate_init = 0.3  # fixed gate, rotation angle: arctan(0.3)≈16.7°
 ##### end IST parameters #####
 
 

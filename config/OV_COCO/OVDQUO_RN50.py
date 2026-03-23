@@ -113,10 +113,10 @@ in_channel=[512, 1024]
 use_ist = True
 ist_graph_path = "pretrained/ovcoco_ist_adj.pt"
 ist_hidden_dim = 512
+ist_dim = 256  # IST matching space dimension
 ist_num_layers = 2
 ist_num_heads = 4
 ist_dropout = 0.1
-ist_gate_init = 0.5  # fixed gate, rotation angle: arctan(0.5)≈26.6°
 ##### end IST parameters #####
 
 
