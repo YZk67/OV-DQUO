@@ -213,12 +213,34 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
         return losses
     
     def _loss_ist(self, outputs, targets, indices, num_boxes):
-        """IST auxiliary classification loss (focal loss on IST dual-path scores)."""
-        ist_logits = outputs["ist_logits"]  # [B, Q, C]
-        idx = self._get_src_permutation_idx(indices)
-        # Use ori_labels (not labels which are zeroed for objectness loss)
+        """IST auxiliary classification loss (focal loss on IST dual-path scores).
+
+        IST logits are computed on a subsample of queries. We remap the
+        Hungarian matching indices to the subsampled query space.
+        """
+        ist_logits = outputs["ist_logits"]  # [B, Q_sub, C]
+        perm = outputs["ist_query_indices"]  # [Q_sub] indices into full query set
+        Q_sub = ist_logits.size(1)
+
+        # Build reverse map: full_query_idx -> sub_idx (or -1 if not sampled)
+        Q_full = perm.max().item() + 1 if perm.numel() > 0 else 0
+        reverse_map = torch.full((max(Q_full + 1, 1),), -1, dtype=torch.long, device=perm.device)
+        reverse_map[perm] = torch.arange(Q_sub, device=perm.device)
+
+        # Remap matching indices to subsampled space
+        new_indices = []
+        for batch_idx, (src_idx, tgt_idx) in enumerate(indices):
+            if src_idx.numel() == 0:
+                new_indices.append((torch.tensor([], dtype=torch.long, device=src_idx.device),
+                                    torch.tensor([], dtype=torch.long, device=tgt_idx.device)))
+                continue
+            sub_idx = reverse_map[src_idx]
+            mask = sub_idx >= 0  # only keep matches that fall in subsample
+            new_indices.append((sub_idx[mask], tgt_idx[mask]))
+
+        idx = self._get_src_permutation_idx(new_indices)
         target_classes_o = torch.cat(
-            [t["ori_labels"][J] for t, (_, J) in zip(targets, indices)]
+            [t["ori_labels"][J] for t, (_, J) in zip(targets, new_indices)]
         )
         target_classes = torch.full(
             ist_logits.shape[:2],
@@ -226,7 +248,8 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
             dtype=torch.int64,
             device=ist_logits.device,
         )
-        target_classes[idx] = target_classes_o
+        if target_classes_o.numel() > 0:
+            target_classes[idx] = target_classes_o
         target_classes_onehot = torch.zeros(
             [ist_logits.shape[0], ist_logits.shape[1], ist_logits.shape[2] + 1],
             dtype=ist_logits.dtype,
@@ -242,7 +265,7 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
             gamma=2,
             reduce=False,
         )
-        loss_ist = loss_ist.mean(1).sum() / num_boxes * ist_logits.shape[1]
+        loss_ist = loss_ist.mean(1).sum() / max(num_boxes, 1) * Q_sub
         return {"loss_ist": loss_ist}
 
     def _loss_labels_vfl(self, outputs, targets, indices, num_boxes, pseudo_indices, num_pseudo_boxes, pseudo_weight, log=True, dn=False):

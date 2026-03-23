@@ -117,7 +117,7 @@ ist_dim = 256  # IST matching space dimension
 ist_num_layers = 2
 ist_num_heads = 4
 ist_dropout = 0.1
-ist_loss_coef = 1.0  # weight for IST auxiliary classification loss
+ist_loss_coef = 0.05  # weight for IST auxiliary classification loss
 ##### end IST parameters #####
 
 
