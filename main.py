@@ -145,8 +145,9 @@ def main(args):
         ema_m = None
     model_without_ddp = model
     if args.distributed:
+        find_unused = args.find_unused_params or getattr(args, 'use_ist', False)
         model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[args.gpu], find_unused_parameters=args.find_unused_params
+            model, device_ids=[args.gpu], find_unused_parameters=find_unused
         )
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
