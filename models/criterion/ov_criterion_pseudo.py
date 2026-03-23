@@ -216,8 +216,9 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
         """IST auxiliary classification loss (focal loss on IST dual-path scores)."""
         ist_logits = outputs["ist_logits"]  # [B, Q, C]
         idx = self._get_src_permutation_idx(indices)
+        # Use ori_labels (not labels which are zeroed for objectness loss)
         target_classes_o = torch.cat(
-            [t["labels"][J] for t, (_, J) in zip(targets, indices)]
+            [t["ori_labels"][J] for t, (_, J) in zip(targets, indices)]
         )
         target_classes = torch.full(
             ist_logits.shape[:2],
