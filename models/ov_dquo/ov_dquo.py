@@ -540,10 +540,10 @@ def build_ov_dquo(args):
     weight_dict = {"loss_ce": args.cls_loss_coef,
                    "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
-    # IST auxiliary loss
+    clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
+    # IST auxiliary loss (added after clean_weight_dict_wo_dn to avoid interm KeyError)
     if getattr(args, 'use_ist', False):
         weight_dict["loss_ist"] = getattr(args, 'ist_loss_coef', 1.0)
-    clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
 
     # for DN training
     if args.use_dn:
