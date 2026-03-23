@@ -155,15 +155,15 @@ class ISTv3Module(nn.Module):
         ist_text = self.text_out(h)  # [B, C, ist_dim]
         ist_text = F.normalize(ist_text, dim=-1)
 
-        # 6. Dual-path scoring: CLIP score uses real CLIP features
-        clip_score = clip_roi_features @ text_features.t()  # [B, Q, C]
-
+        # 6. IST scoring in learned space
         ist_visual = self.visual_out(roi_features)  # [B, Q, ist_dim]
         ist_visual = F.normalize(ist_visual, dim=-1)
         ist_score = torch.bmm(ist_visual, ist_text.transpose(1, 2))  # [B, Q, C]
 
+        # 7. Combine with CLIP score
+        clip_score = clip_roi_features @ text_features.t()  # [B, Q, C]
         gate = self.gate.sigmoid()
-        return clip_score + gate * ist_score
+        return clip_score + gate * ist_score, ist_score
 
 
 # Keep old modules for backward compatibility

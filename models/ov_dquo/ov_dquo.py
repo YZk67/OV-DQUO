@@ -388,8 +388,8 @@ class OV_DQUO(nn.Module):
             # ISTv3: text without wildcard, subsample adj to match sampled categories
             text_no_wc = text_feature[:-1]
             ist_adj = self._get_sub_adj(text_no_wc, categories)
-            ist_logits = self.ist_module(text_no_wc, ist_adj, roi_features)
-            out["ist_logits"] = ist_logits
+            _, ist_score = self.ist_module(text_no_wc, ist_adj, roi_features)
+            out["ist_logits"] = ist_score  # pure IST score for auxiliary loss
             out["ist_query_indices"] = perm
 
         if not self.training:
@@ -427,7 +427,7 @@ class OV_DQUO(nn.Module):
                         ist_src.tensors, self.args, self.backbone, extra_conv=False)
                 else:
                     ist_roi = roi_features  # ViT uses same dense features
-                clip_outputs_class = self.ist_module(
+                clip_outputs_class, _ = self.ist_module(
                     text_feature, self.ist_adj, ist_roi,
                     clip_roi_features=roi_features)
             else:
