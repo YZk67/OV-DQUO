@@ -112,18 +112,23 @@ class ISTv3Module(nn.Module):
             nn.init.xavier_uniform_(proj.weight)
             nn.init.zeros_(proj.bias)
 
-    def forward(self, text_features, adj, roi_features):
+    def forward(self, text_features, adj, roi_features, clip_roi_features=None):
         """
         Full forward: cross-attention + GAT + dual-path scoring.
 
         Args:
             text_features: [C, text_dim] frozen CLIP text embeddings
             adj: [C, C] category adjacency matrix
-            roi_features: [B, Q, text_dim] CLIP visual features for queries
+            roi_features: [B, Q, text_dim] visual features for IST (layer4)
+            clip_roi_features: [B, Q, text_dim] visual features for CLIP score (layer3).
+                               If None, uses roi_features for both.
 
         Returns:
             scores: [B, Q, C] classification scores
         """
+        if clip_roi_features is None:
+            clip_roi_features = roi_features
+
         B, Q, _ = roi_features.shape
         C = text_features.size(0)
 
@@ -150,8 +155,8 @@ class ISTv3Module(nn.Module):
         ist_text = self.text_out(h)  # [B, C, ist_dim]
         ist_text = F.normalize(ist_text, dim=-1)
 
-        # 6. Dual-path scoring
-        clip_score = roi_features @ text_features.t()  # [B, Q, C]
+        # 6. Dual-path scoring: CLIP score uses real CLIP features
+        clip_score = clip_roi_features @ text_features.t()  # [B, Q, C]
 
         ist_visual = self.visual_out(roi_features)  # [B, Q, ist_dim]
         ist_visual = F.normalize(ist_visual, dim=-1)

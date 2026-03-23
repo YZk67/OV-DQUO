@@ -249,10 +249,12 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
             device=ist_logits.device,
         )
         if target_classes_o.numel() > 0:
-            # Clamp labels to valid range: out-of-sample categories -> background
+            # Filter out invalid labels: negative (pseudo) or out-of-range -> skip
             C = ist_logits.size(-1)
-            target_classes_o = target_classes_o.clamp(max=C)  # C = background idx
-            target_classes[idx] = target_classes_o
+            valid = (target_classes_o >= 0) & (target_classes_o < C)
+            if valid.any():
+                valid_idx = (idx[0][valid], idx[1][valid])
+                target_classes[valid_idx] = target_classes_o[valid]
         target_classes_onehot = torch.zeros(
             [ist_logits.shape[0], ist_logits.shape[1], ist_logits.shape[2] + 1],
             dtype=ist_logits.dtype,

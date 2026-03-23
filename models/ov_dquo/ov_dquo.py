@@ -428,7 +428,8 @@ class OV_DQUO(nn.Module):
                 else:
                     ist_roi = roi_features  # ViT uses same dense features
                 clip_outputs_class = self.ist_module(
-                    text_feature, self.ist_adj, ist_roi)
+                    text_feature, self.ist_adj, ist_roi,
+                    clip_roi_features=roi_features)
             else:
                 clip_outputs_class = roi_features @ text_feature.t()
             if self.args.analysis: #  for analysis
