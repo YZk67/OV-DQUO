@@ -372,21 +372,22 @@ class OV_DQUO(nn.Module):
         out["dn_meta"] = dn_meta
 
         # ISTv2: compute IST classification logits during training for auxiliary loss
+        # Reuse encoder's roi_features (from text_query_assign, already computed)
+        # to avoid extra sample_feature_rn call which OOMs with 1000 queries
         if self.training and self.use_ist and self._ist_text_cache is not None:
-            # Extract roi features for last decoder layer's predicted boxes
-            last_coord = outputs_coord_list[-1].detach()  # detach box coords
-            with torch.no_grad():
-                if "RN" in self.args.backbone:
-                    src_feature = ori_clip_features["layer3"]
-                    sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
-                    roi_features = sample_feature_rn(
-                        sizes, last_coord, src_feature.tensors,
-                        self.args, self.backbone, extra_conv=True)
-                else:
-                    src_feature = ori_clip_features["dense"]
-                    sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
-                    roi_features = sample_feature_vit(
-                        sizes, last_coord, src_feature.tensors)
+            # Use C5 features without extra_conv (cheaper, already available)
+            last_coord = outputs_coord_list[-1].detach()
+            if "RN" in self.args.backbone:
+                src_feature = ori_clip_features["layer4"]
+                sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                roi_features = sample_feature_rn(
+                    sizes, last_coord, src_feature.tensors,
+                    self.args, self.backbone, extra_conv=False)
+            else:
+                src_feature = ori_clip_features["dense"]
+                sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                roi_features = sample_feature_vit(
+                    sizes, last_coord, src_feature.tensors)
             # IST text without wildcard for classification
             ist_text_no_wc = self._ist_text_cache[:-1]
             text_no_wc = text_feature[:-1]
