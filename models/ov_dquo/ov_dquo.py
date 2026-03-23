@@ -415,19 +415,8 @@ class OV_DQUO(nn.Module):
             roi_features = roi_feats[-1]
             # ISTv3: image-conditioned dual-path classification
             if self.use_ist:
-                # Use layer4 (C5) features for IST to match training
-                # (training uses layer4+extra_conv=False due to OOM)
-                if "RN" in self.args.backbone:
-                    ist_src = ori_clip_features["layer4"]
-                    ist_sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in ist_src.decompose()[1]]
-                    ist_roi = sample_feature_rn(
-                        ist_sizes, outputs_coord_list[-1],
-                        ist_src.tensors, self.args, self.backbone, extra_conv=False)
-                else:
-                    ist_roi = roi_features  # ViT uses same dense features
                 clip_outputs_class, _ = self.ist_module(
-                    text_feature, self.ist_adj, ist_roi,
-                    clip_roi_features=roi_features)
+                    text_feature, self.ist_adj, roi_features)
             else:
                 clip_outputs_class = roi_features @ text_feature.t()
             if self.args.analysis: #  for analysis
