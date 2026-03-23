@@ -223,8 +223,8 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
         Q_sub = ist_logits.size(1)
 
         # Build reverse map: full_query_idx -> sub_idx (or -1 if not sampled)
-        Q_full = perm.max().item() + 1 if perm.numel() > 0 else 0
-        reverse_map = torch.full((max(Q_full + 1, 1),), -1, dtype=torch.long, device=perm.device)
+        Q_full = outputs["pred_logits"].size(1)  # full query count (1000)
+        reverse_map = torch.full((Q_full,), -1, dtype=torch.long, device=perm.device)
         reverse_map[perm] = torch.arange(Q_sub, device=perm.device)
 
         # Remap matching indices to subsampled space
