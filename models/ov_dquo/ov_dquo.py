@@ -385,9 +385,10 @@ class OV_DQUO(nn.Module):
                 sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
                 roi_features = sample_feature_vit(
                     sizes, sub_coord, src_feature.tensors)
-            # ISTv3: text without wildcard, direct forward with visual context
+            # ISTv3: text without wildcard, subsample adj to match sampled categories
             text_no_wc = text_feature[:-1]
-            ist_logits = self.ist_module(text_no_wc, self.ist_adj, roi_features)
+            ist_adj = self._get_sub_adj(text_no_wc, categories)
+            ist_logits = self.ist_module(text_no_wc, ist_adj, roi_features)
             out["ist_logits"] = ist_logits
             out["ist_query_indices"] = perm
 
@@ -434,6 +435,23 @@ class OV_DQUO(nn.Module):
             final_outputs_class = inverse_sigmoid(final_outputs_class)
             out["pred_logits"] = final_outputs_class
         return out
+
+    def _get_sub_adj(self, text_feature, categories):
+        """Get sub-adjacency matrix matching sampled categories."""
+        cat_to_ist_idx = {name: i for i, name in enumerate(self.ist_cat_names)}
+        if "RN" in self.args.backbone:
+            # categories includes wildcard at end
+            cats = categories[:-1] if self.training else categories
+            ist_indices = [cat_to_ist_idx[c] for c in cats if c in cat_to_ist_idx]
+        else:
+            # EVA: categories is index tensor or None
+            if categories is not None:
+                ist_indices = categories.tolist()
+            else:
+                ist_indices = list(range(len(self.ist_cat_names)))
+        idx = torch.tensor(ist_indices, device=self.ist_adj.device)
+        # Extract subgraph: adj[idx][:, idx]
+        return self.ist_adj[idx][:, idx]
 
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord):
