@@ -97,8 +97,9 @@ class ISTv2Module(nn.Module):
         self.ist_dim = ist_dim
 
         # Learnable gate: sigmoid(gate) controls IST contribution
-        # Init to 0 -> sigmoid(0) = 0.5
-        self.gate = nn.Parameter(torch.zeros(1))
+        # Init to -5 -> sigmoid(-5) ≈ 0.007, so IST starts near-zero
+        # and gradually increases as IST learns meaningful representations
+        self.gate = nn.Parameter(torch.full((1,), -5.0))
 
         # Text path: project text embeddings and propagate via GAT
         self.text_input_proj = nn.Linear(text_dim, hidden_dim)

@@ -468,11 +468,12 @@ class OV_DQUO(nn.Module):
         # GAT propagation on full graph
         ist_text_full = self.ist_module.forward_text(full_text, self.ist_adj)  # [N_graph, ist_dim]
 
+        # Reorder ist_text_full to match text_feature's category order
+        cat_to_ist_idx = {name: i for i, name in enumerate(self.ist_cat_names)}
+
         if self.training:
-            # Select subset matching sampled categories
             if "RN" in self.args.backbone:
                 # RN50: categories is a list of strings (with wildcard at end)
-                cat_to_ist_idx = {name: i for i, name in enumerate(self.ist_cat_names)}
                 cats_no_wildcard = categories[:-1]  # remove wildcard
                 ist_indices = [cat_to_ist_idx[c] for c in cats_no_wildcard if c in cat_to_ist_idx]
                 ist_indices_t = torch.tensor(ist_indices, device=ist_text_full.device)
@@ -486,8 +487,13 @@ class OV_DQUO(nn.Module):
                 wildcard_ist = torch.zeros(1, ist_text.size(-1), device=ist_text.device)
                 ist_text = torch.cat([ist_text, wildcard_ist], dim=0)
         else:
-            # Inference: use all categories
-            ist_text = ist_text_full  # [N_graph, ist_dim]
+            # Inference: reorder ist_text to match categories order
+            if "RN" in self.args.backbone:
+                ist_indices = [cat_to_ist_idx[c] for c in categories if c in cat_to_ist_idx]
+                ist_indices_t = torch.tensor(ist_indices, device=ist_text_full.device)
+                ist_text = ist_text_full[ist_indices_t]  # [C, ist_dim]
+            else:
+                ist_text = ist_text_full  # EVA: order matches classifier order
 
         return ist_text
 
