@@ -44,6 +44,7 @@ def get_args_parser():
     parser.add_argument("--find_unused_params", action="store_true")
     parser.add_argument("--eval_every_epoch",default=1, type=int,help="evaluate every k epoch")
     parser.add_argument("--eval_start_epoch",default=20, type=int,help="evaluate after the j_th epoch")
+    parser.add_argument("--print_freq", default=0, type=int, help="log print frequency (0=auto)")
     parser.add_argument("--amp", action="store_true", help="Train with mixed precision")
     parser.add_argument("--analysis", action="store_true", help="whether to analysis the model result")
     # distributed training parameters

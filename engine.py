@@ -45,7 +45,9 @@ def train_one_epoch(
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
-    if utils.get_world_size() == 1:
+    if getattr(args, 'print_freq', 0) > 0:
+        print_freq = args.print_freq
+    elif utils.get_world_size() == 1:
         print_freq = 20
     else:
         print_freq = 200
@@ -201,7 +203,9 @@ def evaluate(
 
     else:
         raise ValueError
-    if args.debug or utils.get_world_size() == 1:
+    if getattr(args, 'print_freq', 0) > 0:
+        print_freq = args.print_freq
+    elif args.debug or utils.get_world_size() == 1:
         print_freq = 10
     else:
         print_freq = 100
