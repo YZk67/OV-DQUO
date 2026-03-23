@@ -370,6 +370,28 @@ class OV_DQUO(nn.Module):
                     for a, b in zip(enc_outputs_class, enc_outputs_coord)
                 ]
         out["dn_meta"] = dn_meta
+
+        # ISTv2: compute IST classification logits during training for auxiliary loss
+        if self.training and self.use_ist and self._ist_text_cache is not None:
+            # Extract roi features for last decoder layer's predicted boxes
+            last_coord = outputs_coord_list[-1].detach()  # detach box coords
+            if "RN" in self.args.backbone:
+                src_feature = ori_clip_features["layer3"]
+                sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                roi_features = sample_feature_rn(
+                    sizes, last_coord, src_feature.tensors,
+                    self.args, self.backbone, extra_conv=True)
+            else:
+                src_feature = ori_clip_features["dense"]
+                sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                roi_features = sample_feature_vit(
+                    sizes, last_coord, src_feature.tensors)
+            # IST text without wildcard for classification
+            ist_text_no_wc = self._ist_text_cache[:-1]
+            text_no_wc = text_feature[:-1]
+            ist_logits = self.ist_module.classify(roi_features, text_no_wc, ist_text_no_wc)
+            out["ist_logits"] = ist_logits
+
         if not self.training:
             sample_box = outputs_coord_list[-1:]
             roi_feats = []
@@ -515,9 +537,12 @@ def build_ov_dquo(args):
 
 
     # prepare weight dict
-    weight_dict = {"loss_ce": args.cls_loss_coef, 
+    weight_dict = {"loss_ce": args.cls_loss_coef,
                    "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
+    # IST auxiliary loss
+    if getattr(args, 'use_ist', False):
+        weight_dict["loss_ist"] = getattr(args, 'ist_loss_coef', 1.0)
     clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
 
     # for DN training

@@ -62,12 +62,15 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
         ######### end for denoise loss ######### 
 
 
-        ######### start bbox&classification loss for decoders ######### 
+        ######### start bbox&classification loss for decoders #########
         for loss in self.losses:
             if loss=="labels":
                 losses.update(self._loss_labels_vfl(outputs, targets, indices,num_boxes,pseudo_indices, num_pseudo_boxes,weight))
             else:
                 losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
+        # IST auxiliary classification loss
+        if "ist_logits" in outputs_without_aux:
+            losses.update(self._loss_ist(outputs_without_aux, targets, indices, num_boxes))
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 indices, pseudo_indices,weight = self.ov_matcher(aux_outputs, targets[: aux_outputs["pred_logits"].size(0)])
@@ -209,6 +212,38 @@ class OVSetCriterion_Pseudo(OVSetCriterion):
         losses = {"loss_ce": loss_ce}
         return losses
     
+    def _loss_ist(self, outputs, targets, indices, num_boxes):
+        """IST auxiliary classification loss (focal loss on IST dual-path scores)."""
+        ist_logits = outputs["ist_logits"]  # [B, Q, C]
+        idx = self._get_src_permutation_idx(indices)
+        target_classes_o = torch.cat(
+            [t["labels"][J] for t, (_, J) in zip(targets, indices)]
+        )
+        target_classes = torch.full(
+            ist_logits.shape[:2],
+            ist_logits.size(-1),  # background class index
+            dtype=torch.int64,
+            device=ist_logits.device,
+        )
+        target_classes[idx] = target_classes_o
+        target_classes_onehot = torch.zeros(
+            [ist_logits.shape[0], ist_logits.shape[1], ist_logits.shape[2] + 1],
+            dtype=ist_logits.dtype,
+            device=ist_logits.device,
+        )
+        target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
+        target_classes_onehot = target_classes_onehot[:, :, :-1]
+        loss_ist = sigmoid_focal_loss(
+            ist_logits,
+            target_classes_onehot,
+            num_boxes,
+            alpha=self.focal_alpha,
+            gamma=2,
+            reduce=False,
+        )
+        loss_ist = loss_ist.mean(1).sum() / num_boxes * ist_logits.shape[1]
+        return {"loss_ist": loss_ist}
+
     def _loss_labels_vfl(self, outputs, targets, indices, num_boxes, pseudo_indices, num_pseudo_boxes, pseudo_weight, log=True, dn=False):
         focal_alpha=0.75
         focal_gamma=2.0
