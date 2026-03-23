@@ -375,17 +375,18 @@ class OV_DQUO(nn.Module):
         if self.training and self.use_ist and self._ist_text_cache is not None:
             # Extract roi features for last decoder layer's predicted boxes
             last_coord = outputs_coord_list[-1].detach()  # detach box coords
-            if "RN" in self.args.backbone:
-                src_feature = ori_clip_features["layer3"]
-                sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
-                roi_features = sample_feature_rn(
-                    sizes, last_coord, src_feature.tensors,
-                    self.args, self.backbone, extra_conv=True)
-            else:
-                src_feature = ori_clip_features["dense"]
-                sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
-                roi_features = sample_feature_vit(
-                    sizes, last_coord, src_feature.tensors)
+            with torch.no_grad():
+                if "RN" in self.args.backbone:
+                    src_feature = ori_clip_features["layer3"]
+                    sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                    roi_features = sample_feature_rn(
+                        sizes, last_coord, src_feature.tensors,
+                        self.args, self.backbone, extra_conv=True)
+                else:
+                    src_feature = ori_clip_features["dense"]
+                    sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                    roi_features = sample_feature_vit(
+                        sizes, last_coord, src_feature.tensors)
             # IST text without wildcard for classification
             ist_text_no_wc = self._ist_text_cache[:-1]
             text_no_wc = text_feature[:-1]
