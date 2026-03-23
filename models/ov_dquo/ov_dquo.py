@@ -217,9 +217,7 @@ class OV_DQUO(nn.Module):
             else:
                 assert self.args.pseudo_box != ""
                 text_feature=self.classifier[:-1] # remove wildcard embed during ovlvis inference
-        # ISTv3: store text features for later use (not modified)
-        if self.use_ist:
-            self._ist_text_feature = text_feature
+        # text_feature is NOT modified by IST (v3 uses it directly in forward)
         ori_clip_features, ori_clip_pos_embeds = self.backbone(samples)
         clip_features = [
             ori_clip_features[k] for k in ori_clip_features.keys() if k != "dense" and k != "layer4"# discard dense feature layer
