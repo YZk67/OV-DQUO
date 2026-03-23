@@ -19,7 +19,7 @@ from util.misc import (
 import torch.nn.functional as F
 from torchvision.ops import box_iou
 from ..transformer.base import sample_feature_rn,sample_feature_vit
-from ..ist_module import ISTv2Module
+from ..ist_module import ISTv3Module
 
 class OV_DQUO(nn.Module):
     def __init__(
@@ -168,23 +168,21 @@ class OV_DQUO(nn.Module):
         self.classifier = classifier
         self.args = args
 
-        # IST v2 module (dual-path: never modifies text embeddings)
+        # IST v3 module (C²SRT-style: cross-attention + GAT, image-conditioned)
         self.use_ist = getattr(args, 'use_ist', False)
         if self.use_ist:
             ist_graph_data = torch.load(args.ist_graph_path, map_location='cpu')
             self.register_buffer('ist_adj', ist_graph_data['adj'])
             self.ist_cat_names = ist_graph_data['cat_names']
-            self.ist_module = ISTv2Module(
+            self.ist_module = ISTv3Module(
                 text_dim=args.text_dim,
-                hidden_dim=getattr(args, 'ist_hidden_dim', 512),
+                hidden_dim=getattr(args, 'ist_hidden_dim', 256),
                 ist_dim=getattr(args, 'ist_dim', 256),
                 num_layers=getattr(args, 'ist_num_layers', 2),
                 num_heads=getattr(args, 'ist_num_heads', 4),
                 dropout=getattr(args, 'ist_dropout', 0.1),
             )
-            # Cache for pre-computed GAT text prototypes (set in forward)
-            self._ist_text_cache = None
-            print(f"[ISTv2] Loaded category graph: {len(self.ist_cat_names)} categories, "
+            print(f"[ISTv3] Loaded category graph: {len(self.ist_cat_names)} categories, "
                   f"{(self.ist_adj > 0).sum().item()} edges")
 
         self._reset_parameters()
@@ -219,9 +217,9 @@ class OV_DQUO(nn.Module):
             else:
                 assert self.args.pseudo_box != ""
                 text_feature=self.classifier[:-1] # remove wildcard embed during ovlvis inference
-        # ISTv2: pre-compute GAT text prototypes (text_feature is NOT modified)
+        # ISTv3: store text features for later use (not modified)
         if self.use_ist:
-            self._ist_text_cache = self._compute_ist_text(text_feature, categories)
+            self._ist_text_feature = text_feature
         ori_clip_features, ori_clip_pos_embeds = self.backbone(samples)
         clip_features = [
             ori_clip_features[k] for k in ori_clip_features.keys() if k != "dense" and k != "layer4"# discard dense feature layer
@@ -291,8 +289,6 @@ class OV_DQUO(nn.Module):
             raw_text_feats=text_feature,
             targets=targets,
             backbone=self.backbone,
-            ist_module=self.ist_module if self.use_ist else None,
-            ist_text_cache=self._ist_text_cache if self.use_ist else None,
         )
         outputs_coord_list = []
         for _, (layer_ref_sig, layer_bbox_embed, layer_hs) in enumerate(
@@ -371,12 +367,10 @@ class OV_DQUO(nn.Module):
                 ]
         out["dn_meta"] = dn_meta
 
-        # ISTv2: compute IST classification logits during training for auxiliary loss
-        # Subsample queries to avoid OOM (roi_align on 1000 queries is too expensive)
-        if self.training and self.use_ist and self._ist_text_cache is not None:
+        # ISTv3: compute IST classification logits during training for auxiliary loss
+        if self.training and self.use_ist:
             ist_num_queries = 200  # subsample for memory efficiency
             last_coord = outputs_coord_list[-1].detach()
-            # Random subsample of queries
             Q = last_coord.size(1)
             perm = torch.randperm(Q, device=last_coord.device)[:ist_num_queries]
             sub_coord = last_coord[:, perm]
@@ -391,12 +385,11 @@ class OV_DQUO(nn.Module):
                 sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
                 roi_features = sample_feature_vit(
                     sizes, sub_coord, src_feature.tensors)
-            # IST text without wildcard for classification
-            ist_text_no_wc = self._ist_text_cache[:-1]
+            # ISTv3: text without wildcard, direct forward with visual context
             text_no_wc = text_feature[:-1]
-            ist_logits = self.ist_module.classify(roi_features, text_no_wc, ist_text_no_wc)
+            ist_logits = self.ist_module(text_no_wc, self.ist_adj, roi_features)
             out["ist_logits"] = ist_logits
-            out["ist_query_indices"] = perm  # for matching in criterion
+            out["ist_query_indices"] = perm
 
         if not self.training:
             sample_box = outputs_coord_list[-1:]
@@ -421,10 +414,10 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            # ISTv2: dual-path classification
-            if self.use_ist and self._ist_text_cache is not None:
-                clip_outputs_class = self.ist_module.classify(
-                    roi_features, text_feature, self._ist_text_cache)
+            # ISTv3: image-conditioned dual-path classification
+            if self.use_ist:
+                clip_outputs_class = self.ist_module(
+                    text_feature, self.ist_adj, roi_features)
             else:
                 clip_outputs_class = roi_features @ text_feature.t()
             if self.args.analysis: #  for analysis
@@ -441,61 +434,6 @@ class OV_DQUO(nn.Module):
             final_outputs_class = inverse_sigmoid(final_outputs_class)
             out["pred_logits"] = final_outputs_class
         return out
-
-    def _compute_ist_text(self, text_feature, categories):
-        """Pre-compute GAT text prototypes for ISTv2.
-
-        Runs GAT on ALL categories in the graph, then selects the subset
-        corresponding to the current batch's sampled categories.
-
-        Args:
-            text_feature: [C+1, text_dim] (training, with wildcard) or [C, text_dim] (inference)
-            categories: list of category names (RN50) or index tensor (EVA) or None (EVA inference)
-
-        Returns:
-            ist_text: [C, ist_dim] or [C+1, ist_dim] GAT text prototypes matching text_feature
-        """
-        num_ist_cats = len(self.ist_cat_names)
-
-        # Get full text features for all categories in the graph
-        if "RN" in self.args.backbone:
-            with torch.no_grad():
-                full_text = self.classifier(list(self.ist_cat_names))
-        else:
-            with torch.no_grad():
-                full_text = self.classifier[:num_ist_cats].clone()
-
-        # GAT propagation on full graph
-        ist_text_full = self.ist_module.forward_text(full_text, self.ist_adj)  # [N_graph, ist_dim]
-
-        # Reorder ist_text_full to match text_feature's category order
-        cat_to_ist_idx = {name: i for i, name in enumerate(self.ist_cat_names)}
-
-        if self.training:
-            if "RN" in self.args.backbone:
-                # RN50: categories is a list of strings (with wildcard at end)
-                cats_no_wildcard = categories[:-1]  # remove wildcard
-                ist_indices = [cat_to_ist_idx[c] for c in cats_no_wildcard if c in cat_to_ist_idx]
-                ist_indices_t = torch.tensor(ist_indices, device=ist_text_full.device)
-                ist_text = ist_text_full[ist_indices_t]  # [num_sampled, ist_dim]
-                # Add zero vector for wildcard (won't be used in classification)
-                wildcard_ist = torch.zeros(1, ist_text.size(-1), device=ist_text.device)
-                ist_text = torch.cat([ist_text, wildcard_ist], dim=0)
-            else:
-                # EVA: categories is an index tensor
-                ist_text = ist_text_full[categories]  # [num_sampled, ist_dim]
-                wildcard_ist = torch.zeros(1, ist_text.size(-1), device=ist_text.device)
-                ist_text = torch.cat([ist_text, wildcard_ist], dim=0)
-        else:
-            # Inference: reorder ist_text to match categories order
-            if "RN" in self.args.backbone:
-                ist_indices = [cat_to_ist_idx[c] for c in categories if c in cat_to_ist_idx]
-                ist_indices_t = torch.tensor(ist_indices, device=ist_text_full.device)
-                ist_text = ist_text_full[ist_indices_t]  # [C, ist_dim]
-            else:
-                ist_text = ist_text_full  # EVA: order matches classifier order
-
-        return ist_text
 
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord):

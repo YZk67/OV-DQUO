@@ -113,7 +113,7 @@ in_channel=[768, 768, 768]
 ##### start IST parameters #####
 use_ist = True
 ist_graph_path = "pretrained/lvis_ist_adj.pt"
-ist_hidden_dim = 512
+ist_hidden_dim = 256  # hidden dim for cross-attention + GAT
 ist_dim = 256  # IST matching space dimension
 ist_num_layers = 2
 ist_num_heads = 4

@@ -20,9 +20,7 @@ class OVDeformableTransformer(DeformableTransformer):
         raw_visual_feats=None,
         raw_text_feats=None,
         targets=None,
-        backbone=None,
-        ist_module=None,
-        ist_text_cache=None,
+        backbone=None
     ):
         src_flatten = []
         mask_flatten = []
@@ -121,8 +119,6 @@ class OVDeformableTransformer(DeformableTransformer):
             raw_text_feats=raw_text_feats,
             targets=targets,
             backbone=backbone,
-            ist_module=ist_module,
-            ist_text_cache=ist_text_cache,
         )
         if refpoint_embed is not None:
             refpoint_embed = torch.cat([refpoint_embed, query], dim=1)
@@ -184,8 +180,6 @@ class OVDeformableTransformer(DeformableTransformer):
                        raw_text_feats,
                        targets,
                        backbone,
-                       ist_module=None,
-                       ist_text_cache=None,
                        ):
         if "RN" in self.args.backbone:
             src_feature = raw_visual_feats["layer4"] # C5 in ResNet
@@ -208,13 +202,7 @@ class OVDeformableTransformer(DeformableTransformer):
                 roi_features = sample_feature_vit(sizes,
                                             region_proposals.sigmoid(),
                                             src_feature.tensors)
-        # ISTv2: dual-path classification for encoder proposal assignment
-        if ist_module is not None and ist_text_cache is not None:
-            # Match ist_text_cache to text_feature (wildcard may have been stripped)
-            ist_text = ist_text_cache[:text_feature.size(0)]
-            outputs_class = ist_module.classify(roi_features, text_feature, ist_text)
-        else:
-            outputs_class = roi_features @ text_feature.t()
+        outputs_class = roi_features @ text_feature.t()
         with torch.no_grad():
             outputs_class = torch.cat([outputs_class,torch.ones_like(outputs_class[:, :, :1]) * -1.0,],dim=-1,)
             outputs_class = (outputs_class * 100).softmax(dim=-1)
