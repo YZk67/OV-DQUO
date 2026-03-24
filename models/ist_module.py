@@ -78,8 +78,8 @@ class ISTv3Module(nn.Module):
         self.hidden_dim = hidden_dim
         self.ist_dim = ist_dim
 
-        # Learnable gate: sigmoid(0) = 0.5
-        self.gate = nn.Parameter(torch.zeros(1))
+        # Learnable gate: sigmoid(-2) ≈ 0.12
+        self.gate = nn.Parameter(torch.full((1,), -2.0))
 
         # Text projection
         self.text_proj = nn.Linear(text_dim, hidden_dim)
