@@ -16,7 +16,14 @@ import torch.nn.functional as F
 
 
 class GATv2Layer(nn.Module):
-    """Single GATv2 attention layer with multi-head support."""
+    """Single GATv2 attention layer with sparse edge-list computation.
+
+    For small graphs (N < 256), falls back to dense implementation.
+    For large graphs (e.g. LVIS 1203 categories), uses sparse edge-list
+    to avoid O(N²) memory: only computes attention on actual edges.
+    """
+
+    SPARSE_THRESHOLD = 256
 
     def __init__(self, in_dim, out_dim, num_heads=4, dropout=0.1):
         super().__init__()
@@ -30,6 +37,18 @@ class GATv2Layer(nn.Module):
         self.leaky_relu = nn.LeakyReLU(0.2)
         self.dropout = nn.Dropout(dropout)
 
+        # Cached edge index for sparse mode
+        self._edge_index = None
+        self._edge_adj_device = None
+
+    def _get_edge_index(self, adj):
+        """Cache edge index from adjacency matrix (recompute if device changes)."""
+        if self._edge_index is None or self._edge_adj_device != adj.device:
+            src, dst = (adj > 0).nonzero(as_tuple=True)  # dst <- src edges
+            self._edge_index = (src, dst)
+            self._edge_adj_device = adj.device
+        return self._edge_index
+
     def forward(self, h, adj):
         """
         h: [N, in_dim] node features
@@ -37,6 +56,12 @@ class GATv2Layer(nn.Module):
         Returns: [N, out_dim]
         """
         N = h.size(0)
+        if N < self.SPARSE_THRESHOLD:
+            return self._forward_dense(h, adj, N)
+        return self._forward_sparse(h, adj, N)
+
+    def _forward_dense(self, h, adj, N):
+        """Original dense implementation for small graphs (OV-COCO 65 cats)."""
         Wh = self.W(h).view(N, self.num_heads, self.head_dim)
 
         Wh_i = Wh.unsqueeze(1).expand(-1, N, -1, -1)
@@ -53,6 +78,41 @@ class GATv2Layer(nn.Module):
 
         out = torch.einsum('ijh,jhd->ihd', alpha, Wh)
         out = out.reshape(N, -1)
+        return out
+
+    def _forward_sparse(self, h, adj, N):
+        """Sparse edge-list implementation for large graphs (OV-LVIS 1203 cats).
+
+        Only computes attention scores on existing edges → O(E) instead of O(N²).
+        """
+        H = self.num_heads
+        D = self.head_dim
+
+        Wh = self.W(h).view(N, H, D)  # [N, H, D]
+        row, col = self._get_edge_index(adj)  # row=dst_node (i), col=src_node (j)
+        E = row.size(0)
+
+        # Compute attention only on edges: e_ij = a^T LeakyReLU(Wh_i + Wh_j)
+        e_val = self.leaky_relu(Wh[row] + Wh[col])  # [E, H, D]
+        e_val = (e_val * self.a.unsqueeze(0)).sum(-1)  # [E, H]
+
+        # Sparse softmax: group by destination node (row)
+        e_max = torch.full((N, H), float('-inf'), device=h.device)
+        e_max.scatter_reduce_(0, row.unsqueeze(1).expand(-1, H), e_val, reduce='amax')
+        e_val = e_val - e_max[row]  # numerical stability
+        e_exp = e_val.exp()
+
+        e_sum = torch.zeros(N, H, device=h.device)
+        e_sum.scatter_add_(0, row.unsqueeze(1).expand(-1, H), e_exp)
+        alpha = e_exp / (e_sum[row] + 1e-16)  # [E, H]
+        alpha = self.dropout(alpha)
+
+        # Weighted aggregation: out_i = sum_j alpha_ij * Wh_j
+        msg = alpha.unsqueeze(-1) * Wh[col]  # [E, H, D]
+        out = torch.zeros(N, H, D, device=h.device)
+        out.scatter_add_(0, row.unsqueeze(1).unsqueeze(2).expand(-1, H, D), msg)
+
+        out = out.reshape(N, -1)  # [N, out_dim]
         return out
 
 
@@ -143,7 +203,7 @@ class ISTv3Module(nn.Module):
         h_cross, _ = self.cross_attn(h, v_ctx, v_ctx)  # [B, C, hidden]
         h = self.cross_norm(h + h_cross)
 
-        # 4. GAT propagation (per batch element, C is small ~48-65)
+        # 4. GAT propagation (per batch element; sparse for LVIS 1203 cats)
         for gat, ln in zip(self.gat_layers, self.gat_norms):
             h_list = []
             for b in range(B):
