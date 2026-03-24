@@ -6,7 +6,7 @@ v2 (ISTv2Module): Dual-path additive boost, GAT on text only → no visual aware
 v3 (ISTv3Module): C²SRT-style, cross-attention injects visual context into GAT.
     - Text categories attend to roi visual features via cross-attention
     - GAT propagates image-aware category representations
-    - Score: clip_score + gate * (visual_proj @ GAT_output.T)
+    - Auxiliary-only: IST score used for training loss, inference uses pure CLIP
     - Each image gets its own category prototypes (image-conditioned)
 """
 
@@ -118,17 +118,17 @@ class GATv2Layer(nn.Module):
 
 class ISTv3Module(nn.Module):
     """
-    C²SRT-style Inter-category Semantic Transfer with visual context.
+    C²SRT-style Inter-category Semantic Transfer (auxiliary-only mode).
+
+    IST acts as a training-time regularizer: its auxiliary loss encourages
+    the visual backbone to learn features that respect category relationships.
+    Inference uses pure CLIP scores — IST never touches the classification path.
 
     Architecture:
         1. text_proj(text_features) -> h_text  [C, hidden]
-        2. Cross-attention: h_text attends to roi_features -> image-aware h  [B, C, hidden]
+        2. Cross-attention: h_text attends to roi visual features -> image-aware h
         3. GAT propagation on category graph -> refined h  [B, C, hidden]
-        4. text_out(h) -> ist_text  [B, C, ist_dim]
-        5. score = clip_score + gate * (visual_out(roi) @ ist_text.T)
-
-    Key difference from v2: GAT receives visual context, so text prototypes
-    are IMAGE-CONDITIONED — different images produce different prototypes.
+        4. IST score = visual_out(roi) @ text_out(h).T  (for auxiliary loss only)
     """
 
     def __init__(self, text_dim, hidden_dim=256, ist_dim=256,
@@ -137,9 +137,6 @@ class ISTv3Module(nn.Module):
         self.text_dim = text_dim
         self.hidden_dim = hidden_dim
         self.ist_dim = ist_dim
-
-        # Learnable gate: sigmoid(-2) ≈ 0.12
-        self.gate = nn.Parameter(torch.full((1,), -2.0))
 
         # Text projection
         self.text_proj = nn.Linear(text_dim, hidden_dim)
@@ -172,23 +169,18 @@ class ISTv3Module(nn.Module):
             nn.init.xavier_uniform_(proj.weight)
             nn.init.zeros_(proj.bias)
 
-    def forward(self, text_features, adj, roi_features, clip_roi_features=None):
+    def forward(self, text_features, adj, roi_features):
         """
-        Full forward: cross-attention + GAT + dual-path scoring.
+        Compute IST scores for auxiliary loss (training only).
 
         Args:
             text_features: [C, text_dim] frozen CLIP text embeddings
             adj: [C, C] category adjacency matrix
-            roi_features: [B, Q, text_dim] visual features for IST (layer4)
-            clip_roi_features: [B, Q, text_dim] visual features for CLIP score (layer3).
-                               If None, uses roi_features for both.
+            roi_features: [B, Q, text_dim] visual features from backbone
 
         Returns:
-            scores: [B, Q, C] classification scores
+            ist_score: [B, Q, C] IST classification scores (for loss_ist)
         """
-        if clip_roi_features is None:
-            clip_roi_features = roi_features
-
         B, Q, _ = roi_features.shape
         C = text_features.size(0)
 
@@ -211,19 +203,12 @@ class ISTv3Module(nn.Module):
             h_new = torch.stack(h_list)  # [B, C, hidden]
             h = ln(h + F.elu(h_new))
 
-        # 5. Project to IST space
-        ist_text = self.text_out(h)  # [B, C, ist_dim]
-        ist_text = F.normalize(ist_text, dim=-1)
+        # 5. Project to IST space and compute score
+        ist_text = F.normalize(self.text_out(h), dim=-1)       # [B, C, ist_dim]
+        ist_visual = F.normalize(self.visual_out(roi_features), dim=-1)  # [B, Q, ist_dim]
+        ist_score = torch.bmm(ist_visual, ist_text.transpose(1, 2))     # [B, Q, C]
 
-        # 6. IST scoring in learned space
-        ist_visual = self.visual_out(roi_features)  # [B, Q, ist_dim]
-        ist_visual = F.normalize(ist_visual, dim=-1)
-        ist_score = torch.bmm(ist_visual, ist_text.transpose(1, 2))  # [B, Q, C]
-
-        # 7. Combine with CLIP score
-        clip_score = clip_roi_features @ text_features.t()  # [B, Q, C]
-        gate = self.gate.sigmoid()
-        return clip_score + gate * ist_score, ist_score
+        return ist_score
 
 
 # Keep old modules for backward compatibility

@@ -386,8 +386,8 @@ class OV_DQUO(nn.Module):
             # ISTv3: text without wildcard, subsample adj to match sampled categories
             text_no_wc = text_feature[:-1]
             ist_adj = self._get_sub_adj(text_no_wc, categories)
-            _, ist_score = self.ist_module(text_no_wc, ist_adj, roi_features)
-            out["ist_logits"] = ist_score  # pure IST score for auxiliary loss
+            ist_score = self.ist_module(text_no_wc, ist_adj, roi_features)
+            out["ist_logits"] = ist_score  # IST score for auxiliary loss only
             out["ist_query_indices"] = perm
 
         if not self.training:
@@ -413,12 +413,8 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            # ISTv3: image-conditioned dual-path classification
-            if self.use_ist:
-                clip_outputs_class, _ = self.ist_module(
-                    text_feature, self.ist_adj, roi_features)
-            else:
-                clip_outputs_class = roi_features @ text_feature.t()
+            # IST is auxiliary-only: inference always uses pure CLIP score
+            clip_outputs_class = roi_features @ text_feature.t()
             if self.args.analysis: #  for analysis
                 out["sim_mat"] = clip_outputs_class
                 out["ori_pred_logits"] = outputs_class[-1]
