@@ -444,7 +444,7 @@ class OV_DQUO(nn.Module):
         else:
             # EVA: categories is index tensor or None
             if categories is not None:
-                ist_indices = categories.tolist()
+                ist_indices = categories.tolist() if torch.is_tensor(categories) else list(categories)
             else:
                 ist_indices = list(range(len(self.ist_cat_names)))
         idx = torch.tensor(ist_indices, device=self.ist_adj.device)
