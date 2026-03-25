@@ -115,7 +115,7 @@ eval_tau = 100
 objectness_alpha = 1.0
 nms_iou_threshold = 0.5
 target_class_factor=8.0
-multi_prompt_embed_path = "pretrained/lvis_multi_prompt_evaclip_vitb_16_fixed.pt"
+multi_prompt_embed_path = "pretrained/lvis_multi_prompt_evaclip_vitb_16.pt"
 ##### end inference parameters ##### 
 
 
