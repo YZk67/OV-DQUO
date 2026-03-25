@@ -109,11 +109,12 @@ in_channel=[512, 1024]
 ##### end open-vocabulary training parameters ##### 
 
 
-##### start inference parameters ##### 
+##### start inference parameters #####
 eval_tau = 100
 objectness_alpha = 1.0
 nms_iou_threshold = 0.5
 target_class_factor=3.0
+cls_temperature = 50.0  # learned projection temperature
 ##### end inference parameters ##### 
 
 

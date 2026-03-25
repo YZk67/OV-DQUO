@@ -1,6 +1,5 @@
 import copy
 import math
-import json
 import torch
 import torch.nn.functional as F
 from models.backbone.ov_backbone import build_backbone, build_classifier
@@ -169,8 +168,9 @@ class OV_DQUO(nn.Module):
         self.classifier = classifier
         self.args = args
 
-        # Multi-prompt inference: loaded later via register_buffer
-        self._multi_prompt_embed = None
+        # Learned ROI projection for classification (like LaMI-DETR)
+        self.roi_proj = nn.Linear(args.text_dim, args.text_dim)
+        self.cls_temperature = getattr(args, 'cls_temperature', 50.0)
 
         self._reset_parameters()
 
@@ -399,18 +399,11 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            # Multi-prompt mean pooling scoring (inference only)
-            if self._multi_prompt_embed is not None:
-                prototypes = self._multi_prompt_embed  # [C, K, D]
-                if "RN" not in self.args.backbone:
-                    prototypes = prototypes[:-1]  # remove wildcard for EVA
-                # Mean pool across prompts → single embedding per class
-                text_mp = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)  # [C, D]
-                clip_outputs_class = roi_features @ text_mp.t()
-                clip_outputs_class = clip_outputs_class * self.args.eval_tau
-            else:
-                clip_outputs_class = roi_features @ text_feature.t()
-                clip_outputs_class = clip_outputs_class * self.args.eval_tau
+            # Learned projection + L2 norm for classification
+            roi_proj = self.roi_proj(roi_features)  # [B, Q, D]
+            roi_proj = F.normalize(roi_proj, p=2, dim=-1)
+            text_norm = F.normalize(text_feature, p=2, dim=-1)
+            clip_outputs_class = roi_proj @ text_norm.t() * self.cls_temperature
             if self.args.analysis: #  for analysis
                 out["sim_mat"] = clip_outputs_class
                 out["ori_pred_logits"] = outputs_class[-1]
@@ -476,39 +469,6 @@ def build_ov_dquo(args):
         classifier=classifier,
         args=args,
     )
-
-    # Load multi-prompt embeddings for inference-only logsumexp scoring
-    multi_prompt_path = getattr(args, "multi_prompt_embed_path", "")
-    if multi_prompt_path:
-        print(f"[TPA-Inference] Loading multi-prompt embeddings from {multi_prompt_path}")
-        multi_data = torch.load(multi_prompt_path, map_location="cpu")
-        if "RN" in args.backbone:
-            # RN50: multi_data is dict {category_name: [K, D]}
-            # Will be loaded dynamically at inference via classifier
-            model._multi_prompt_data = multi_data
-        else:
-            # EVA: build [C, K, D] tensor aligned with classifier
-            all_classes = json.load(open(args.all_classes))
-            embeds = []
-            for name in all_classes:
-                emb = multi_data[name]  # [K, D] or [D]
-                if isinstance(emb, torch.Tensor):
-                    if emb.dim() == 1:
-                        emb = emb.unsqueeze(0)
-                else:
-                    emb = torch.tensor(emb)
-                embeds.append(emb)
-            K_max = max(e.size(0) for e in embeds)
-            padded = []
-            for e in embeds:
-                if e.size(0) < K_max:
-                    pad = e.mean(dim=0, keepdim=True).expand(K_max - e.size(0), -1)
-                    e = torch.cat([e, pad], dim=0)
-                padded.append(e)
-            multi_embed = torch.stack(padded, dim=0)  # [C, K, D]
-            multi_embed = F.normalize(multi_embed, p=2, dim=-1)
-            model._multi_prompt_embed = multi_embed.to(args.device)
-            print(f"[TPA-Inference] Loaded {multi_embed.shape[0]} categories, {multi_embed.shape[1]} prompts each")
 
     # prepare weight dict
     weight_dict = {"loss_ce": args.cls_loss_coef, 
