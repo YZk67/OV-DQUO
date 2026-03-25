@@ -1,6 +1,8 @@
 import copy
 import math
+import json
 import torch
+import torch.nn.functional as F
 from models.backbone.ov_backbone import build_backbone, build_classifier
 from models.criterion.ov_criterion_pseudo import OVSetCriterion_Pseudo
 from models.matcher.ov_matcher import build_ov_matcher
@@ -166,6 +168,10 @@ class OV_DQUO(nn.Module):
 
         self.classifier = classifier
         self.args = args
+
+        # Multi-prompt inference: loaded later via register_buffer
+        self._multi_prompt_embed = None
+
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -195,6 +201,32 @@ class OV_DQUO(nn.Module):
         else:
             if "RN" in self.args.backbone:
                 text_feature=self.classifier(categories)
+                # Build multi-prompt prototypes for RN50 inference
+                if hasattr(self, '_multi_prompt_data') and self._multi_prompt_data is not None:
+                    mp_data = self._multi_prompt_data
+                    embeds = []
+                    for cat in categories:
+                        emb = mp_data.get(cat)
+                        if emb is not None:
+                            if isinstance(emb, torch.Tensor):
+                                if emb.dim() == 1:
+                                    emb = emb.unsqueeze(0)
+                            else:
+                                emb = torch.tensor(emb)
+                            embeds.append(emb)
+                        else:
+                            # Fallback: use single CLIP embedding
+                            embeds.append(text_feature[len(embeds)].unsqueeze(0))
+                    K_max = max(e.size(0) for e in embeds)
+                    padded = []
+                    for e in embeds:
+                        if e.size(0) < K_max:
+                            pad = e.mean(dim=0, keepdim=True).expand(K_max - e.size(0), -1)
+                            e = torch.cat([e, pad], dim=0)
+                        padded.append(e)
+                    self._multi_prompt_embed = F.normalize(
+                        torch.stack(padded, dim=0), p=2, dim=-1
+                    ).to(text_feature.device)
             else:
                 assert self.args.pseudo_box != ""
                 text_feature=self.classifier[:-1] # remove wildcard embed during ovlvis inference
@@ -367,15 +399,25 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            clip_outputs_class = roi_features @ text_feature.t()
+            # Multi-prompt logsumexp scoring (inference only)
+            if self._multi_prompt_embed is not None:
+                prototypes = self._multi_prompt_embed  # [C, K, D]
+                if "RN" not in self.args.backbone:
+                    prototypes = prototypes[:-1]  # remove wildcard for EVA
+                sim_all = torch.einsum("bqd,ckd->bqck", roi_features, prototypes)
+                tau = self.args.eval_tau
+                clip_outputs_class = torch.logsumexp(sim_all * tau, dim=-1)
+            else:
+                clip_outputs_class = roi_features @ text_feature.t()
+                clip_outputs_class = clip_outputs_class * self.args.eval_tau
             if self.args.analysis: #  for analysis
-                out["sim_mat"] = clip_outputs_class  
-                out["ori_pred_logits"] = outputs_class[-1]  
+                out["sim_mat"] = clip_outputs_class
+                out["ori_pred_logits"] = outputs_class[-1]
             clip_outputs_class = torch.cat(
                 [clip_outputs_class, torch.zeros_like(clip_outputs_class[:, :, :1])],
                 dim=-1,
             )
-            final_outputs_class = (clip_outputs_class * self.args.eval_tau).softmax(
+            final_outputs_class = clip_outputs_class.softmax(
                 dim=-1
             ) * (outputs_class[-1].sigmoid() ** self.args.objectness_alpha)
             final_outputs_class = final_outputs_class[:, :, :-1]
@@ -434,6 +476,38 @@ def build_ov_dquo(args):
         args=args,
     )
 
+    # Load multi-prompt embeddings for inference-only logsumexp scoring
+    multi_prompt_path = getattr(args, "multi_prompt_embed_path", "")
+    if multi_prompt_path:
+        print(f"[TPA-Inference] Loading multi-prompt embeddings from {multi_prompt_path}")
+        multi_data = torch.load(multi_prompt_path, map_location="cpu")
+        if "RN" in args.backbone:
+            # RN50: multi_data is dict {category_name: [K, D]}
+            # Will be loaded dynamically at inference via classifier
+            model._multi_prompt_data = multi_data
+        else:
+            # EVA: build [C, K, D] tensor aligned with classifier
+            all_classes = json.load(open(args.all_classes))
+            embeds = []
+            for name in all_classes:
+                emb = multi_data[name]  # [K, D] or [D]
+                if isinstance(emb, torch.Tensor):
+                    if emb.dim() == 1:
+                        emb = emb.unsqueeze(0)
+                else:
+                    emb = torch.tensor(emb)
+                embeds.append(emb)
+            K_max = max(e.size(0) for e in embeds)
+            padded = []
+            for e in embeds:
+                if e.size(0) < K_max:
+                    pad = e.mean(dim=0, keepdim=True).expand(K_max - e.size(0), -1)
+                    e = torch.cat([e, pad], dim=0)
+                padded.append(e)
+            multi_embed = torch.stack(padded, dim=0)  # [C, K, D]
+            multi_embed = F.normalize(multi_embed, p=2, dim=-1)
+            model._multi_prompt_embed = multi_embed.to(args.device)
+            print(f"[TPA-Inference] Loaded {multi_embed.shape[0]} categories, {multi_embed.shape[1]} prompts each")
 
     # prepare weight dict
     weight_dict = {"loss_ce": args.cls_loss_coef, 

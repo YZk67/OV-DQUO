@@ -110,11 +110,12 @@ in_channel=[768, 768, 768]
 ##### end open-vocabulary training parameters ##### 
 
 
-##### start inference parameters ##### 
+##### start inference parameters #####
 eval_tau = 100
 objectness_alpha = 1.0
 nms_iou_threshold = 0.5
 target_class_factor=8.0
+multi_prompt_embed_path = "pretrained/lvis_multi_prompt_evaclip_vitb_16_fixed.pt"
 ##### end inference parameters ##### 
 
 
