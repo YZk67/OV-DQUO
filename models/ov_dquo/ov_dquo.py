@@ -399,14 +399,15 @@ class OV_DQUO(nn.Module):
                                         src_feature.tensors)
                     )
             roi_features = roi_feats[-1]
-            # Multi-prompt logsumexp scoring (inference only)
+            # Multi-prompt mean pooling scoring (inference only)
             if self._multi_prompt_embed is not None:
                 prototypes = self._multi_prompt_embed  # [C, K, D]
                 if "RN" not in self.args.backbone:
                     prototypes = prototypes[:-1]  # remove wildcard for EVA
-                sim_all = torch.einsum("bqd,ckd->bqck", roi_features, prototypes)
-                tau = self.args.eval_tau
-                clip_outputs_class = torch.logsumexp(sim_all * tau, dim=-1)
+                # Mean pool across prompts → single embedding per class
+                text_mp = F.normalize(prototypes.mean(dim=1), p=2, dim=-1)  # [C, D]
+                clip_outputs_class = roi_features @ text_mp.t()
+                clip_outputs_class = clip_outputs_class * self.args.eval_tau
             else:
                 clip_outputs_class = roi_features @ text_feature.t()
                 clip_outputs_class = clip_outputs_class * self.args.eval_tau
