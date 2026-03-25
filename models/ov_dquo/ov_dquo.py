@@ -299,6 +299,8 @@ class OV_DQUO(nn.Module):
             raw_text_feats=text_feature,
             targets=targets,
             backbone=self.backbone,
+            roi_proj=self.roi_proj,
+            cls_temperature=self.cls_temperature,
         )
         outputs_coord_list = []
         for _, (layer_ref_sig, layer_bbox_embed, layer_hs) in enumerate(

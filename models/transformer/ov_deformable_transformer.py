@@ -20,7 +20,9 @@ class OVDeformableTransformer(DeformableTransformer):
         raw_visual_feats=None,
         raw_text_feats=None,
         targets=None,
-        backbone=None
+        backbone=None,
+        roi_proj=None,
+        cls_temperature=50.0,
     ):
         src_flatten = []
         mask_flatten = []
@@ -119,6 +121,8 @@ class OVDeformableTransformer(DeformableTransformer):
             raw_text_feats=raw_text_feats,
             targets=targets,
             backbone=backbone,
+            roi_proj=roi_proj,
+            cls_temperature=cls_temperature,
         )
         if refpoint_embed is not None:
             refpoint_embed = torch.cat([refpoint_embed, query], dim=1)
@@ -180,6 +184,8 @@ class OVDeformableTransformer(DeformableTransformer):
                        raw_text_feats,
                        targets,
                        backbone,
+                       roi_proj=None,
+                       cls_temperature=50.0,
                        ):
         if "RN" in self.args.backbone:
             src_feature = raw_visual_feats["layer4"] # C5 in ResNet
@@ -202,10 +208,20 @@ class OVDeformableTransformer(DeformableTransformer):
                 roi_features = sample_feature_vit(sizes,
                                             region_proposals.sigmoid(),
                                             src_feature.tensors)
-        outputs_class = roi_features @ text_feature.t()
+        if roi_proj is not None:
+            roi_proj_feat = roi_proj(roi_features)
+            roi_proj_feat = F.normalize(roi_proj_feat, p=2, dim=-1)
+            text_norm = F.normalize(text_feature, p=2, dim=-1)
+            outputs_class = roi_proj_feat @ text_norm.t() * cls_temperature
+        else:
+            outputs_class = roi_features @ text_feature.t()
         with torch.no_grad():
-            outputs_class = torch.cat([outputs_class,torch.ones_like(outputs_class[:, :, :1]) * -1.0,],dim=-1,)
-            outputs_class = (outputs_class * 100).softmax(dim=-1)
+            if roi_proj is None:
+                outputs_class = torch.cat([outputs_class,torch.ones_like(outputs_class[:, :, :1]) * -1.0,],dim=-1,)
+                outputs_class = (outputs_class * 100).softmax(dim=-1)
+            else:
+                outputs_class = torch.cat([outputs_class,torch.zeros_like(outputs_class[:, :, :1]),],dim=-1,)
+                outputs_class = outputs_class.softmax(dim=-1)
             if self.args.target_class_factor != 1.0 and not self.training:
                 if outputs_class.size(-1) == 66:
                     target_index = COCO_INDEX
