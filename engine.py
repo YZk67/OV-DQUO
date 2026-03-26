@@ -73,10 +73,10 @@ def train_one_epoch(
                 num_sample = args.num_label_sampled - gt.numel()
                 # Federated loss: sample negatives weighted by inverse frequency
                 if hasattr(data_loader.dataset, 'fed_loss_weight') and data_loader.dataset.fed_loss_weight is not None:
-                    neg_weights = data_loader.dataset.fed_loss_weight[neg_class]
+                    neg_weights = data_loader.dataset.fed_loss_weight[neg_class.cpu()]
                     neg_weights = neg_weights / neg_weights.sum()
                     neg_idx = torch.multinomial(neg_weights, min(num_sample, neg_class.numel()), replacement=False)
-                    sampled = torch.cat([gt, neg_class[neg_idx]])
+                    sampled = torch.cat([gt, neg_class[neg_idx.to(gt.device)]])
                 else:
                     sampled = neg_class[torch.randperm(neg_class.numel(), device=gt.device)][:num_sample]
                     sampled = torch.cat([gt, sampled])
