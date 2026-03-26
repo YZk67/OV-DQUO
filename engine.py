@@ -285,6 +285,7 @@ def evaluate(
         stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
         rank = utils.get_rank()
         if epoch is not None: # 训练期间只保存，不验证
+            os.makedirs(os.path.join(output_dir, f"epoch_{epoch}"), exist_ok=True)
             torch.save(lvis_results, os.path.join(output_dir,f"epoch_{epoch}",f"pred_{rank}.pth"))
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
