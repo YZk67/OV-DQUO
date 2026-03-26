@@ -62,6 +62,17 @@ class LvisDetection(TvLvisDetection):
                 rep_factor = max({category_rep[cat_id] for cat_id in cats}, default=1.0)
                 rep_factors.append(rep_factor)
             self.rep_factors = rep_factors
+            # Federated loss: compute per-class sampling weight (inverse frequency)
+            # Weight = 1 / f(c), so rare classes are sampled more often as negatives
+            num_classes = len(self.category_list)
+            fed_weight = torch.ones(num_classes)
+            for cat_id, cat_freq in counter.items():
+                label_idx = self.cat2label.get(cat_id)
+                if label_idx is not None and label_idx < num_classes:
+                    fed_weight[label_idx] = 1.0 / max(cat_freq, 1e-6)
+            self.fed_loss_weight = fed_weight
+        else:
+            self.fed_loss_weight = None
         self.use_pseudo_box = pseudo_box != ""
         if self.use_pseudo_box:
             with open(pseudo_box, "r") as f:
