@@ -71,12 +71,15 @@ def train_one_epoch(
                 all_class = torch.arange(len(categories), device=gt.device)
                 neg_class = all_class[~(all_class.unsqueeze(1) == gt.unsqueeze(0)).any(-1)]
                 num_sample = args.num_label_sampled - gt.numel()
-                # Federated loss: sample negatives weighted by inverse frequency
+                # Federated loss: sample negatives weighted by frequency (like Detic/LaMI)
                 if hasattr(data_loader.dataset, 'fed_loss_weight') and data_loader.dataset.fed_loss_weight is not None:
-                    neg_weights = data_loader.dataset.fed_loss_weight[neg_class.cpu()]
-                    neg_weights = neg_weights / neg_weights.sum()
-                    neg_idx = torch.multinomial(neg_weights, min(num_sample, neg_class.numel()), replacement=False)
-                    sampled = torch.cat([gt, neg_class[neg_idx.to(gt.device)]])
+                    # Build probability over ALL classes, then zero out GT classes
+                    C = len(categories)
+                    prob = data_loader.dataset.fed_loss_weight[:C].clone()
+                    prob[gt.cpu()] = 0  # exclude GT classes from sampling
+                    prob = prob / prob.sum()
+                    more = torch.multinomial(prob, min(num_sample, (prob > 0).sum().item()), replacement=False)
+                    sampled = torch.cat([gt, more.to(gt.device)])
                 else:
                     sampled = neg_class[torch.randperm(neg_class.numel(), device=gt.device)][:num_sample]
                     sampled = torch.cat([gt, sampled])

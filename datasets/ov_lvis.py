@@ -63,14 +63,16 @@ class LvisDetection(TvLvisDetection):
                 rep_factors.append(rep_factor)
             self.rep_factors = rep_factors
             # Federated loss: compute per-class sampling weight
-            # Use repeat factor as weight: r(c) = max(1, sqrt(t/f(c)))
-            # This is much milder than 1/f(c) — same formula used for image resampling
+            # Following Detic/LaMI: weight = image_count ** 0.5
+            # Higher weight for frequent classes (they're more useful as negatives)
             num_classes = len(self.category_list)
             fed_weight = torch.ones(num_classes)
-            for cat_id, rep in category_rep.items():
+            for cat_id, cat_freq in counter.items():
                 label_idx = self.cat2label.get(cat_id)
                 if label_idx is not None and label_idx < num_classes:
-                    fed_weight[label_idx] = rep
+                    # cat_freq is fraction, convert back to count
+                    count = cat_freq * num_images
+                    fed_weight[label_idx] = max(count, 1.0) ** 0.5
             self.fed_loss_weight = fed_weight
         else:
             self.fed_loss_weight = None
