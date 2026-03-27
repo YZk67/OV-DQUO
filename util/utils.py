@@ -377,6 +377,7 @@ class ModelEma(torch.nn.Module):
         self.module = deepcopy(model)
         self.module.eval()
         self.decay = decay
+        self.num_updates = 0
         self.device = device  # perform ema on different device from model if set
         if self.device is not None:
             self.module.to(device=device)
@@ -389,7 +390,9 @@ class ModelEma(torch.nn.Module):
                 ema_v.copy_(update_fn(ema_v, model_v))
 
     def update(self, model):
-        self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
+        decay = min(self.decay, (1 + self.num_updates) / (10 + self.num_updates))
+        self._update(model, update_fn=lambda e, m: decay * e + (1. - decay) * m)
+        self.num_updates += 1
 
     def set(self, model):
         self._update(model, update_fn=lambda e, m: m)

@@ -218,9 +218,11 @@ def main(args):
                 ema_m.module.load_state_dict(
                     utils.clean_state_dict(checkpoint["ema_model"])
                 )
+                if "ema_num_updates" in checkpoint:
+                    ema_m.num_updates = checkpoint["ema_num_updates"]
             else:
                 del ema_m
-                ema_m = ModelEma(model, args.ema_decay) 
+                ema_m = ModelEma(model, args.ema_decay)
         if (
             not args.eval
             and "optimizer" in checkpoint
@@ -285,6 +287,7 @@ def main(args):
                     weights.update(
                         {
                             "ema_model": ema_m.module.state_dict(),
+                            "ema_num_updates": ema_m.num_updates,
                         }
                     )
                 utils.save_on_master(weights, checkpoint_path)
