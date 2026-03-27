@@ -287,27 +287,24 @@ def evaluate(
     if args.dataset_file == "ovlvis":
         stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
         rank = utils.get_rank()
-        if epoch is not None: # 训练期间只保存，不验证
-            os.makedirs(os.path.join(output_dir, f"epoch_{epoch}"), exist_ok=True)
-            torch.save(lvis_results, os.path.join(output_dir,f"epoch_{epoch}",f"pred_{rank}.pth"))
-            if torch.distributed.is_initialized():
-                torch.distributed.barrier()
-        else:
-            torch.save(lvis_results, os.path.join(output_dir,f"pred_{rank}.pth"))
-            if torch.distributed.is_initialized():
-                torch.distributed.barrier()
-            if rank == 0:
-                world_size = utils.get_world_size()
-                for i in range(1, world_size):
-                    temp = torch.load(output_dir + f"/pred_{i}.pth")
-                    lvis_results += temp
-                lvis_results = LVISResults(base_ds, lvis_results, max_dets=300)
-                for iou_type in iou_types:
-                    lvis_eval = LVISEval(base_ds, lvis_results, iou_type)
-                    lvis_eval.run()
-                    lvis_eval.print_results()
-            if rank == 0:
-                stats.update(lvis_eval.get_results())
+        save_dir = os.path.join(output_dir, f"epoch_{epoch}") if epoch is not None else output_dir
+        os.makedirs(save_dir, exist_ok=True)
+        torch.save(lvis_results, os.path.join(save_dir, f"pred_{rank}.pth"))
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        if rank == 0:
+            world_size = utils.get_world_size()
+            for i in range(1, world_size):
+                temp = torch.load(os.path.join(save_dir, f"pred_{i}.pth"))
+                lvis_results += temp
+            lvis_results = LVISResults(base_ds, lvis_results, max_dets=300)
+            for iou_type in iou_types:
+                lvis_eval = LVISEval(base_ds, lvis_results, iou_type)
+                lvis_eval.run()
+                lvis_eval.print_results()
+            stats.update(lvis_eval.get_results())
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
         return stats, None
     
     else:
