@@ -88,6 +88,7 @@ class ConvertCocoPolysToMask(object):
         image_id = torch.tensor([image_id])
         anno = target["annotations"]
         anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
+        ann_ids = [obj.get("id", -1) for obj in anno]
         boxes = [obj["bbox"] for obj in anno]
         # guard against no boxes via resizing
         boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
@@ -129,9 +130,11 @@ class ConvertCocoPolysToMask(object):
             if num_keypoints:
                 keypoints = keypoints.view(num_keypoints, -1, 3)
 
+        ann_ids = torch.tensor(ann_ids, dtype=torch.int64)
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
         classes = classes[keep]
+        ann_ids = ann_ids[keep]
         pseudo_mask=pseudo_mask[keep]
         weight=weight[keep]
         if self.return_masks:
@@ -141,6 +144,7 @@ class ConvertCocoPolysToMask(object):
         target = {}
         target["boxes"] = boxes
         target["labels"] = classes
+        target["ann_ids"] = ann_ids
         target["pseudo_label_map"] = pseudo_label_map
         target["pseudo_mask"] = pseudo_mask
         target["weight"] = weight

@@ -38,6 +38,7 @@ def train_one_epoch(
     lr_scheduler=None,
     args=None,
     ema_m=None,
+    vlm_distill=None,
 ):
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     model.train()
@@ -95,6 +96,21 @@ def train_one_epoch(
                 target["ori_labels"] = target["labels"]
                 target["labels"] = target["labels"] - target["labels"]
             loss_dict = criterion(outputs, targets)
+
+            # VLM KL distillation loss
+            if vlm_distill is not None and "roi_features" in outputs:
+                image_ids = [t["image_id"].item() if torch.is_tensor(t["image_id"]) else t["image_id"]
+                             for t in targets]
+                batch_vlm = vlm_distill.get_vlm_targets(image_ids)
+                # Get matching indices from criterion
+                outputs_for_match = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
+                match_indices, _, _ = criterion.ov_matcher(outputs_for_match, targets)
+                vlm_loss = vlm_distill.compute_loss(
+                    outputs["roi_features"], outputs["text_features"],
+                    outputs["pred_boxes"], targets,
+                    match_indices, batch_vlm, device)
+                loss_dict["loss_vlm_distill"] = vlm_loss
+
             weight_dict = criterion.weight_dict
             losses = sum(
                 loss_dict[k] * weight_dict[k]

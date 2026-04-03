@@ -344,6 +344,24 @@ class OV_DQUO(nn.Module):
                     for a, b in zip(enc_outputs_class, enc_outputs_coord)
                 ]
         out["dn_meta"] = dn_meta
+        # Compute region-text similarity for VLM distillation during training
+        if self.training and getattr(self.args, 'use_vlm_distillation', False):
+            train_box = outputs_coord_list[-1:]
+            train_roi_feats = []
+            for coord in train_box:
+                if "RN" in self.args.backbone:
+                    src_feature = ori_clip_features["layer3"]
+                    sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                    train_roi_feats.append(sample_feature_rn(
+                        sizes, coord, src_feature.tensors,
+                        self.args, self.backbone, extra_conv=True))
+                else:
+                    src_feature = ori_clip_features["dense"]
+                    sizes = [((1 - m[0].float()).sum(), (1 - m[:, 0].float()).sum()) for m in src_feature.decompose()[1]]
+                    train_roi_feats.append(sample_feature_vit(
+                        sizes, coord, src_feature.tensors))
+            out["roi_features"] = train_roi_feats[-1]  # [batch, num_queries, clip_dim]
+            out["text_features"] = text_feature  # [num_classes, clip_dim]
         if not self.training:
             sample_box = outputs_coord_list[-1:]
             roi_feats = []

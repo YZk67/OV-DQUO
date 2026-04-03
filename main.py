@@ -248,6 +248,18 @@ def main(args):
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
         return
+    # Initialize VLM distillation if configured
+    vlm_distill = None
+    if getattr(args, 'use_vlm_distillation', False) and getattr(args, 'vlm_targets_path', ''):
+        from models.vlm_distill import VLMDistillLoss
+        vlm_distill = VLMDistillLoss(
+            targets_path=args.vlm_targets_path,
+            temperature=getattr(args, 'vlm_temperature', 2.0),
+            weight=getattr(args, 'vlm_loss_coef', 1.0),
+        )
+        # Add vlm loss to weight dict so it gets properly scaled
+        criterion.weight_dict["loss_vlm_distill"] = args.vlm_loss_coef
+
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
@@ -265,6 +277,7 @@ def main(args):
             lr_scheduler=lr_scheduler,
             args=args,
             ema_m=ema_m,
+            vlm_distill=vlm_distill,
         )
         log_stats = {**{f"train_{k}": v for k, v in train_stats.items()}}
         lr_scheduler.step()

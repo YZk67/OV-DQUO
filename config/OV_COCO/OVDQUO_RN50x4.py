@@ -109,6 +109,14 @@ in_channel=[640,1280]
 ##### end open-vocabulary training parameters ##### 
 
 
+##### start VLM KL distillation parameters #####
+use_vlm_distillation = False
+vlm_targets_path = ""
+vlm_loss_coef = 1.0
+vlm_temperature = 2.0
+##### end VLM KL distillation parameters #####
+
+
 ##### start inference parameters ##### 
 eval_tau = 100
 objectness_alpha = 1.0
