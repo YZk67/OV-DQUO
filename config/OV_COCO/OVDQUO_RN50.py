@@ -110,8 +110,8 @@ in_channel=[512, 1024]
 
 
 ##### start VLM KL distillation parameters #####
-use_vlm_distillation = False
-vlm_targets_path = ""
+use_vlm_distillation = True
+vlm_targets_path = "pretrained/vlm_soft_targets.pth"
 vlm_loss_coef = 1.0
 vlm_temperature = 2.0
 ##### end VLM KL distillation parameters #####
