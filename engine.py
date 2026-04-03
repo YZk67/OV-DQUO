@@ -90,6 +90,11 @@ def train_one_epoch(
                 target['labels'] = new_label
         else:
             used_categories = categories
+        if used_categories and isinstance(used_categories[0], int):
+            distill_categories = [categories[idx] for idx in used_categories]
+        else:
+            distill_categories = list(used_categories)
+
         with torch.cuda.amp.autocast(enabled=args.amp):
             outputs = model(samples,categories=used_categories,targets=targets)
             for target in targets:
@@ -108,7 +113,8 @@ def train_one_epoch(
                 vlm_loss = vlm_distill.compute_loss(
                     outputs["roi_features"], outputs["text_features"],
                     outputs["pred_boxes"], targets,
-                    match_indices, batch_vlm, device)
+                    match_indices, batch_vlm, device,
+                    current_category_names=distill_categories)
                 loss_dict["loss_vlm_distill"] = vlm_loss
 
             weight_dict = criterion.weight_dict

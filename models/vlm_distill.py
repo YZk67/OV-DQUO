@@ -10,6 +10,16 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
+OVCOCO_65_CLASSES = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+    "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
+    "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
+    "kite", "skateboard", "surfboard", "bottle", "cup", "fork", "knife", "spoon", "bowl", "banana",
+    "apple", "sandwich", "orange", "broccoli", "carrot", "pizza", "donut", "cake", "chair", "couch",
+    "bed", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "microwave", "oven", "toaster",
+    "sink", "refrigerator", "book", "clock", "vase", "scissors", "toothbrush",
+]
+
 
 def _torch_load_compat(path, **kwargs):
     try:
@@ -18,16 +28,44 @@ def _torch_load_compat(path, **kwargs):
         return torch.load(path, **kwargs)
 
 
+def _normalize_class_name(name):
+    return str(name).replace("_", " ").strip().lower()
+
+
 class VLMDistillLoss:
     """Computes KL distillation loss between region-text similarity and VLM soft targets."""
 
-    def __init__(self, targets_path, num_classes=65, temperature=2.0, weight=1.0):
+    def __init__(self, targets_path, num_classes=65, temperature=2.0, weight=1.0, class_names=None):
         logger.info(f"Loading VLM soft targets from {targets_path}")
         self.targets = _torch_load_compat(targets_path, map_location="cpu")
         self.num_classes = num_classes
         self.temperature = temperature
         self.weight = weight
+        self.class_names = class_names or self._infer_class_names()
+        self.class_to_idx = (
+            {_normalize_class_name(name): idx for idx, name in enumerate(self.class_names)}
+            if self.class_names is not None
+            else None
+        )
         logger.info(f"Loaded VLM targets for {len(self.targets)} images")
+
+    def _infer_class_names(self):
+        for vlm_list in self.targets.values():
+            for target in vlm_list:
+                if target is None:
+                    continue
+                sim_dist = target.get("similarity_distribution", None)
+                if sim_dist is None:
+                    continue
+                if len(sim_dist) == len(OVCOCO_65_CLASSES):
+                    return OVCOCO_65_CLASSES
+                logger.warning(
+                    "VLM target dimension %s has no known class-name mapping; "
+                    "falling back to positional alignment.",
+                    len(sim_dist),
+                )
+                return None
+        return None
 
     def get_vlm_targets(self, image_ids):
         """Get VLM targets for a batch of images.
@@ -49,7 +87,7 @@ class VLMDistillLoss:
         return batch_targets
 
     def compute_loss(self, roi_features, text_features, pred_boxes, targets,
-                     indices, batch_vlm_targets, device):
+                     indices, batch_vlm_targets, device, current_category_names=None):
         """Compute KL distillation loss.
 
         Args:
@@ -92,7 +130,14 @@ class VLMDistillLoss:
                     continue
 
                 sim_dist = torch.as_tensor(sim_dist, device=device, dtype=torch.float32)
-                if sim_dist.shape[0] != sim_matrix.shape[-1]:
+                if self.class_to_idx is not None and current_category_names is not None:
+                    mapped_dist = torch.zeros(sim_matrix.shape[-1], device=device, dtype=torch.float32)
+                    for local_idx, class_name in enumerate(current_category_names[:sim_matrix.shape[-1]]):
+                        teacher_idx = self.class_to_idx.get(_normalize_class_name(class_name), None)
+                        if teacher_idx is not None and teacher_idx < sim_dist.shape[0]:
+                            mapped_dist[local_idx] = sim_dist[teacher_idx]
+                    sim_dist = mapped_dist
+                elif sim_dist.shape[0] != sim_matrix.shape[-1]:
                     # Truncate or pad
                     if sim_dist.shape[0] > sim_matrix.shape[-1]:
                         sim_dist = sim_dist[:sim_matrix.shape[-1]]

@@ -361,7 +361,8 @@ class OV_DQUO(nn.Module):
                     train_roi_feats.append(sample_feature_vit(
                         sizes, coord, src_feature.tensors))
             out["roi_features"] = train_roi_feats[-1]  # [batch, num_queries, clip_dim]
-            out["text_features"] = text_feature  # [num_classes, clip_dim]
+            distill_text_feature = text_feature[:-1] if self.args.pseudo_box != "" else text_feature
+            out["text_features"] = distill_text_feature  # [num_classes, clip_dim]
         if not self.training:
             sample_box = outputs_coord_list[-1:]
             roi_feats = []

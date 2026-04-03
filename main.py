@@ -252,10 +252,16 @@ def main(args):
     vlm_distill = None
     if getattr(args, 'use_vlm_distillation', False) and getattr(args, 'vlm_targets_path', ''):
         from models.vlm_distill import VLMDistillLoss
+        class_names = None
+        all_classes_path = getattr(args, "all_classes", "")
+        if all_classes_path:
+            with open(all_classes_path) as f:
+                class_names = json.load(f)
         vlm_distill = VLMDistillLoss(
             targets_path=args.vlm_targets_path,
             temperature=getattr(args, 'vlm_temperature', 2.0),
-            weight=getattr(args, 'vlm_loss_coef', 1.0),
+            weight=1.0,
+            class_names=class_names,
         )
         # Add vlm loss to weight dict so it gets properly scaled
         criterion.weight_dict["loss_vlm_distill"] = args.vlm_loss_coef
